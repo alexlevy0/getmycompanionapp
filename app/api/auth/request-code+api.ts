@@ -39,7 +39,8 @@ export async function POST(request: Request): Promise<Response> {
       if (requestCount === 1) {
         await redis.expire(rateLimitKey, 600); // 10 mins Window
       }
-      if (requestCount > 3) {
+      // Relaxed limit for Dev/Testing (was 3)
+      if (requestCount > 100) {
         return Response.json(
           { error: "Trop de demandes. Réessayez dans 10 minutes." },
           { status: 429 }

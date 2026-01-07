@@ -1,8 +1,8 @@
 import { View, Text, Pressable, StyleSheet } from "react-native";
-import type { UserStatus } from "@/types";
+import type { Persona } from "@/types";
 
 interface PersonaCardProps {
-  persona: UserStatus["persona"];
+  persona: Persona;
   onModify: () => void;
 }
 

@@ -11,7 +11,7 @@ const isRedisConfigured =
   process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN;
 
 if (!isRedisConfigured) {
-  log.warn("Upstash Redis not configured - Some features will be disabled");
+  log.warn("Upstash Redis not configured - Rate limiting and OTP features will NOT work.");
 }
 
 export const redis = isRedisConfigured

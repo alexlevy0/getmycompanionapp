@@ -5,6 +5,7 @@ import { createScopedLogger } from "@/lib/logger";
 import { config } from "@/lib/config";
 import { ERROR_MESSAGES, SUCCESS_MESSAGES } from "@/constants/messages";
 import { hashToken } from "@/lib/crypto";
+import { checkRateLimit } from "@/lib/ratelimit";
 
 const log = createScopedLogger("start-trial");
 

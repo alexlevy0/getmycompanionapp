@@ -18,14 +18,15 @@ import { StatusCard } from "@/components/dashboard/StatusCard";
 import { NextCallCard } from "@/components/dashboard/NextCallCard";
 import { StatsRow } from "@/components/dashboard/StatsRow";
 import { PersonaCard } from "@/components/dashboard/PersonaCard";
+import type { UserStatus as UserStatusType, Persona } from "@/types";
 
 // ============================================
 // Types
 // ============================================
 
-interface UserStatus {
-  status: string;
-  persona?: string;
+interface UserData {
+  status: UserStatusType;
+  persona?: Persona;
   firstName?: string;
   phone: string;
   nextCallScheduled?: string;
@@ -61,7 +62,7 @@ export default function HomeScreen() {
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
-  const [userStatus, setUserStatus] = useState<UserStatus | null>(null);
+  const [userStatus, setUserStatus] = useState<UserData | null>(null);
   
   // Login / OTP State
   const [authMode, setAuthMode] = useState<"signup" | "signin">("signup");
@@ -138,7 +139,16 @@ export default function HomeScreen() {
       // Save the auth token
       if (data.token) {
         await saveAuthToken(data.token);
-        await fetchUserStatus(data.token);
+        
+        // Anti-Race Condition:
+        // Use user data returned directly by verify-code if available.
+        // Falls back to fetchUserStatus if not (backward compatibility)
+        if (data.user) {
+          setUserStatus(data.user);
+          setAppState("dashboard");
+        } else {
+           await fetchUserStatus(data.token);
+        }
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Une erreur est survenue");
@@ -191,7 +201,14 @@ export default function HomeScreen() {
 
       if (data.token) {
         await saveAuthToken(data.token);
-        await fetchUserStatus(data.token);
+        
+        // Anti-Race Condition:
+        if (data.user) {
+          setUserStatus(data.user);
+          setAppState("dashboard");
+        } else {
+          await fetchUserStatus(data.token);
+        }
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Une erreur est survenue");

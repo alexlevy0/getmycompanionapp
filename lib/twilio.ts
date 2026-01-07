@@ -82,8 +82,12 @@ interface SendNotificationSMSParams {
 export async function sendNotificationSMS(params: SendNotificationSMSParams): Promise<void> {
   const { phone, message } = params;
 
-  if (!process.env.TWILIO_PHONE_NUMBER) {
-    console.error("TWILIO_PHONE_NUMBER not configured");
+  if (!process.env.TWILIO_PHONE_NUMBER || !process.env.TWILIO_ACCOUNT_SID) {
+    console.warn("TWILIO not configured. Mocking SMS send:");
+    console.log("========================================");
+    console.log(`To: ${phone}`);
+    console.log(`Message: ${message}`);
+    console.log("========================================");
     return;
   }
 

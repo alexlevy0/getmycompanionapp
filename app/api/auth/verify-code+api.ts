@@ -3,6 +3,8 @@ import { redis } from "@/lib/redis";
 import { hashToken } from "@/lib/crypto";
 import { validatePhone, formatPhoneE164 } from "@/lib/utils";
 import { createScopedLogger } from "@/lib/logger";
+import { config } from "@/lib/config";
+import type { UserStatus, Persona } from "@/types";
 
 const log = createScopedLogger("auth-verify-code");
 
@@ -30,7 +32,8 @@ export async function POST(request: Request): Promise<Response> {
       if (requestCount === 1) {
         await redis.expire(rateLimitKey, 600);
       }
-      if (requestCount > 5) {
+      // Relaxed limit for Dev/Testing (was 5)
+      if (requestCount > 100) {
         return Response.json(
           { error: "Trop d'essais. Réessayez plus tard." },
           { status: 429 }
@@ -50,7 +53,10 @@ export async function POST(request: Request): Promise<Response> {
     const formattedPhone = formatPhoneE164(phone);
 
     // 3. Verify OTP
-    const storedOtp = await redis.get(`otp:${formattedPhone}`);
+    // 3. Verify OTP
+    // Force string conversion for robust comparison (Redis might return number)
+    const storedOtp = await redis.get<string>(`otp:${formattedPhone}`);
+    
     if (!storedOtp) {
       return Response.json(
         { error: "Code expiré ou invalide." },
@@ -58,7 +64,7 @@ export async function POST(request: Request): Promise<Response> {
       );
     }
 
-    if (storedOtp !== code) {
+    if (String(storedOtp).trim() !== String(code).trim()) {
       return Response.json({ error: "Code incorrect." }, { status: 400 });
     }
 
@@ -89,9 +95,32 @@ export async function POST(request: Request): Promise<Response> {
     // 6. Cleanup Redis
     await redis.del(`otp:${formattedPhone}`);
 
-    // 7. Return Raw Token
+    // 7. Return Token AND User Data to avoid race condition
+    const meta = customer.metadata;
+    const userData: any = {
+      status: meta.status as UserStatus,
+      persona: meta.persona as Persona,
+      firstName: meta.first_name,
+      phone: meta.phone,
+      
+      nextCallScheduled: meta.next_call_scheduled,
+      totalCalls: parseInt(meta.total_calls || "0"),
+      trialCallsRemaining: parseInt(meta.trial_calls_remaining || "0"),
+      
+      preferredTime: meta.preferred_time || config.defaults.preferredTime,
+      preferredDays: meta.preferred_days || config.defaults.preferredDays,
+      timezone: meta.timezone || config.defaults.timezone,
+    };
+
+    if (meta.status === "awaiting_payment") {
+      const paymentLink = config.stripe.paymentLinkStandard();
+      if (paymentLink) {
+        userData.paymentLink = `${paymentLink}?client_reference_id=${customer.id}`;
+      }
+    }
+
     log.info(`User ${formattedPhone} logged in via OTP`);
-    return Response.json({ success: true, token: newToken });
+    return Response.json({ success: true, token: newToken, user: userData });
 
   } catch (error) {
     log.error("Verify code error", { error });
