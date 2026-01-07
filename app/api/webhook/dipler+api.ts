@@ -48,7 +48,7 @@ function extractPersona(payload: DiplerWebhookPayload): Persona {
 
 function truncate(str: string | undefined, maxLength: number = MAX_SUMMARY_LENGTH): string {
   if (!str) return "";
-  return str.length > maxLength ? str.slice(0, maxLength) : str;
+  return Array.from(str).slice(0, maxLength).join("");
 }
 
 // ============================================

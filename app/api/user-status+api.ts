@@ -3,6 +3,7 @@ import { createScopedLogger } from "@/lib/logger";
 import { config } from "@/lib/config";
 import { ERROR_MESSAGES } from "@/constants/messages";
 import { checkRateLimit } from "@/lib/ratelimit";
+import { hashToken } from "@/lib/crypto";
 import type { Persona, UserStatus } from "@/types";
 
 const log = createScopedLogger("user-status");
@@ -49,8 +50,9 @@ function getClientIp(request: Request): string {
 
 async function findCustomerByToken(token: string) {
   try {
+    const tokenHash = hashToken(token);
     const result = await stripe.customers.search({
-      query: `metadata['auth_token']:'${token}'`,
+      query: `metadata['auth_token_hash']:'${tokenHash}'`,
     });
     return result.data[0] || null;
   } catch (error) {

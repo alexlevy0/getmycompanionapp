@@ -14,6 +14,10 @@ import {
 } from "react-native";
 import { saveAuthToken, getAuthToken, clearAuthToken } from "@/lib/storage";
 import { SettingsModal } from "@/components/SettingsModal";
+import { StatusCard } from "@/components/dashboard/StatusCard";
+import { NextCallCard } from "@/components/dashboard/NextCallCard";
+import { StatsRow } from "@/components/dashboard/StatsRow";
+import { PersonaCard } from "@/components/dashboard/PersonaCard";
 
 // ============================================
 // Types
@@ -273,77 +277,30 @@ export default function HomeScreen() {
           </View>
         </View>
 
-      {/* Status Card */}
-      <View style={[styles.card, { borderLeftColor: statusConfig.color }]}>
-        <Text style={styles.cardEmoji}>{statusConfig.emoji}</Text>
-        <Text style={styles.cardTitle}>{statusConfig.label}</Text>
-        
-        {userStatus.status === "trial" && (
-          <Text style={styles.cardSubtitle}>
-            {userStatus.trialCallsRemaining} appel{userStatus.trialCallsRemaining > 1 ? "s" : ""} gratuit{userStatus.trialCallsRemaining > 1 ? "s" : ""} restant{userStatus.trialCallsRemaining > 1 ? "s" : ""}
-          </Text>
-        )}
-
-        {userStatus.status === "awaiting_payment" && userStatus.paymentLink && (
-          <Pressable
-            style={styles.payButton}
-            onPress={() => {
-              if (typeof window !== "undefined") {
-                window.open(userStatus.paymentLink, "_blank");
-              }
-            }}
-          >
-            <Text style={styles.payButtonText}>Continuer l'abonnement →</Text>
-          </Pressable>
-        )}
-      </View>
+        {/* Status Card */}
+        <StatusCard 
+          status={userStatus.status} 
+          trialCallsRemaining={userStatus.trialCallsRemaining} 
+          paymentLink={userStatus.paymentLink}
+          onOpenPaymentLink={(url) => {
+            if (typeof window !== "undefined") window.open(url, "_blank");
+          }}
+        />
 
         {/* Next Call Card */}
-        {userStatus.nextCallScheduled && (
-          <View style={styles.card}>
-            <Text style={styles.cardLabel}>Prochain appel</Text>
-            <Text style={styles.cardValue}>
-              {new Date(userStatus.nextCallScheduled).toLocaleString("fr-FR", {
-                weekday: "long",
-                day: "numeric",
-                month: "long",
-                hour: "2-digit",
-                minute: "2-digit",
-              })}
-            </Text>
-          </View>
-        )}
+        <NextCallCard scheduledDate={userStatus.nextCallScheduled || ""} />
 
-      {/* Stats */}
-      <View style={styles.statsRow}>
-        <View style={styles.statCard}>
-          <Text style={styles.statValue}>{userStatus.totalCalls}</Text>
-          <Text style={styles.statLabel}>Appels</Text>
-        </View>
-        <View style={styles.statCard}>
-          <Text style={styles.statValue}>{userStatus.preferredTime}</Text>
-          <Text style={styles.statLabel}>Heure préférée</Text>
-        </View>
-      </View>
+        {/* Stats */}
+        <StatsRow 
+          totalCalls={userStatus.totalCalls} 
+          preferredTime={userStatus.preferredTime} 
+        />
 
         {/* Persona */}
-        {userStatus.persona && (
-          <View style={styles.card}>
-            <Text style={styles.cardLabel}>Votre compagnon</Text>
-            <Text style={styles.cardValue}>
-              {userStatus.persona === "coach" && "💪 Coach"}
-              {userStatus.persona === "mentor" && "🎓 Mentor"}
-              {userStatus.persona === "companion" && "🧓 Compagnon"}
-              {userStatus.persona === "friend" && "🫂 Ami"}
-            </Text>
-            <Pressable 
-              onPress={() => setIsSettingsModalVisible(true)}
-              style={styles.cardActionLink}
-            >
-              <Text style={styles.cardActionLinkText}>Modifier</Text>
-            </Pressable>
-          </View>
-        )}
+        <PersonaCard 
+          persona={userStatus.persona} 
+          onModify={() => setIsSettingsModalVisible(true)} 
+        />
 
       </ScrollView>
 
@@ -474,91 +431,6 @@ const styles = StyleSheet.create({
     padding: 8,
   },
   logoutText: {
-    color: "#6b7280",
-    fontSize: 14,
-  },
-  card: {
-    backgroundColor: "#fff",
-    borderRadius: 16,
-    padding: 20,
-    marginBottom: 16,
-    borderLeftWidth: 4,
-    borderLeftColor: "#e0e0e0",
-  },
-  cardEmoji: {
-    fontSize: 32,
-    marginBottom: 8,
-  },
-  cardTitle: {
-    fontSize: 20,
-    fontWeight: "600",
-    color: "#1a1a1a",
-  },
-  cardSubtitle: {
-    fontSize: 14,
-    color: "#666",
-    marginTop: 4,
-  },
-  cardLabel: {
-    fontSize: 12,
-    color: "#6b7280",
-    textTransform: "uppercase",
-    letterSpacing: 1,
-    marginBottom: 4,
-  },
-  cardValue: {
-    fontSize: 18,
-    fontWeight: "600",
-    color: "#1a1a1a",
-  },
-  cardActionLink: {
-    marginTop: 8,
-    alignSelf: "flex-start",
-  },
-  cardActionLinkText: {
-    color: "#2563eb",
-    fontWeight: "600",
-    fontSize: 14,
-  },
-  statsRow: {
-    flexDirection: "row",
-    gap: 16,
-    marginBottom: 16,
-  },
-  statCard: {
-    flex: 1,
-    backgroundColor: "#fff",
-    borderRadius: 16,
-    padding: 20,
-    alignItems: "center",
-  },
-  statValue: {
-    fontSize: 28,
-    fontWeight: "700",
-    color: "#2563eb",
-  },
-  statLabel: {
-    fontSize: 12,
-    color: "#6b7280",
-    marginTop: 4,
-  },
-  payButton: {
-    marginTop: 16,
-    backgroundColor: "#f59e0b",
-    borderRadius: 8,
-    padding: 12,
-    alignItems: "center",
-  },
-  payButtonText: {
-    color: "#fff",
-    fontWeight: "600",
-  },
-  refreshButton: {
-    alignItems: "center",
-    padding: 12,
-    marginTop: 8,
-  },
-  refreshText: {
     color: "#6b7280",
     fontSize: 14,
   },

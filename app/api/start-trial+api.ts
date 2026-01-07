@@ -4,7 +4,7 @@ import { validatePhone, formatPhoneE164 } from "@/lib/utils";
 import { createScopedLogger } from "@/lib/logger";
 import { config } from "@/lib/config";
 import { ERROR_MESSAGES, SUCCESS_MESSAGES } from "@/constants/messages";
-import { checkRateLimit } from "@/lib/ratelimit";
+import { hashToken } from "@/lib/crypto";
 
 const log = createScopedLogger("start-trial");
 
@@ -93,6 +93,7 @@ export async function POST(request: Request): Promise<Response> {
     // 4. Create new customer
     // ========================================
     const authToken = generateAuthToken();
+    const authTokenHash = hashToken(authToken);
 
     const metadata: Record<string, string> = {
       phone: formattedPhone,
@@ -103,7 +104,7 @@ export async function POST(request: Request): Promise<Response> {
       timezone: config.defaults.timezone,
       preferred_time: config.defaults.preferredTime,
       preferred_days: config.defaults.preferredDays,
-      auth_token: authToken,
+      auth_token_hash: authTokenHash, // Store HASH, not token
     };
 
     const customer = await createCustomer(metadata);

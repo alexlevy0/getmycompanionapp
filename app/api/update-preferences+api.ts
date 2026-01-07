@@ -5,6 +5,7 @@ import { createScopedLogger } from "@/lib/logger";
 import { isValidTimeFormat } from "@/lib/utils";
 import { PERSONAS } from "@/constants/personas";
 import { ERROR_MESSAGES } from "@/constants/messages";
+import { hashToken } from "@/lib/crypto";
 import type { Persona } from "@/types";
 
 const log = createScopedLogger("update-preferences");
@@ -25,8 +26,9 @@ function extractBearerToken(request: Request): string | null {
 
 async function findCustomerByToken(token: string) {
   try {
+    const tokenHash = hashToken(token);
     const result = await stripe.customers.search({
-      query: `metadata['auth_token']:'${token}'`,
+      query: `metadata['auth_token_hash']:'${tokenHash}'`,
     });
     return result.data[0] || null;
   } catch (error) {
