@@ -4,7 +4,7 @@
 
 export type Persona = "companion" | "coach" | "mentor" | "friend";
 
-export type UserStatus = "onboarding" | "trial" | "active" | "paused" | "churned";
+export type UserStatus = "onboarding" | "trial" | "active" | "paused" | "churned" | "awaiting_payment";
 
 export interface UserMetadata {
   phone: string;

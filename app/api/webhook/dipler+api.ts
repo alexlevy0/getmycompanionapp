@@ -1,5 +1,6 @@
 import { stripe, updateCustomerMetadata } from "@/lib/stripe";
 import { scheduleNextCall } from "@/lib/qstash";
+import { sendPaymentSMS } from "@/lib/twilio";
 import { calculateNextCallTime } from "@/lib/utils";
 import {
   DiplerWebhookPayload,
@@ -14,16 +15,12 @@ import { MAX_NO_ANSWER_RETRIES, PERSONAS } from "@/constants/personas";
 
 const DEFAULT_PERSONA: Persona = "friend";
 const DEFAULT_TIME = "10:00";
-const MAX_SUMMARY_LENGTH = 500; // Stripe metadata limit
+const MAX_SUMMARY_LENGTH = 500;
 
 // ============================================
 // Helper Functions
 // ============================================
 
-/**
- * Safely extracts persona from Dipler analysis.
- * Returns default if not found or invalid.
- */
 function extractPersona(payload: DiplerWebhookPayload): Persona {
   const extraction = payload.conversation?.postConversationAnalysis?.extraction;
   const detected = extraction?.detected_persona;
@@ -32,7 +29,6 @@ function extractPersona(payload: DiplerWebhookPayload): Persona {
     return detected;
   }
 
-  // Fallback: try to parse from summary
   const summary = payload.conversation?.postConversationAnalysis?.summary?.toLowerCase() || "";
 
   if (summary.includes("coach") || summary.includes("motivation") || summary.includes("sport")) {
@@ -48,9 +44,6 @@ function extractPersona(payload: DiplerWebhookPayload): Persona {
   return DEFAULT_PERSONA;
 }
 
-/**
- * Truncates string to Stripe metadata limit.
- */
 function truncate(str: string | undefined, maxLength: number = MAX_SUMMARY_LENGTH): string {
   if (!str) return "";
   return str.length > maxLength ? str.slice(0, maxLength) : str;
@@ -99,7 +92,6 @@ export async function POST(request: Request): Promise<Response> {
       updates.consecutive_no_answer = noAnswerCount.toString();
 
       if (noAnswerCount < MAX_NO_ANSWER_RETRIES) {
-        // Retry in 1 hour
         const retryTime = new Date(Date.now() + 60 * 60 * 1000);
         const messageId = await scheduleNextCall({
           phone: meta.phone,
@@ -125,12 +117,10 @@ export async function POST(request: Request): Promise<Response> {
     const extraction = analysis?.extraction;
     const isOnboarding = meta.status === "onboarding";
 
-    // Reset no-answer counter
     updates.consecutive_no_answer = "0";
     updates.total_calls = (parseInt(meta.total_calls || "0") + 1).toString();
     updates.last_call_date = new Date().toISOString();
 
-    // Save summary (truncated for Stripe)
     if (analysis?.summary) {
       updates.last_call_summary = truncate(analysis.summary);
     }
@@ -139,21 +129,17 @@ export async function POST(request: Request): Promise<Response> {
     // 6. ONBOARDING: Receptionist Logic
     // ========================================
     if (isOnboarding) {
-      // Extract persona from analysis
       const persona = extractPersona(payload);
       updates.persona = persona;
-      updates.status = "trial"; // Transition to trial
+      updates.status = "trial";
 
-      // Extract user info
       if (extraction?.user_name) {
         updates.first_name = extraction.user_name;
       }
 
-      // Extract preferences (or use persona defaults)
       updates.preferred_time = extraction?.preferred_time || PERSONAS[persona].defaultTime;
       updates.preferred_days = extraction?.preferred_days || PERSONAS[persona].defaultDays;
 
-      // Extract goals if present (for coach/mentor)
       if (extraction?.goals) {
         updates.goals = truncate(extraction.goals);
       }
@@ -161,7 +147,7 @@ export async function POST(request: Request): Promise<Response> {
       console.log(`Onboarding complete: ${meta.phone} → ${persona} (${updates.first_name || "unnamed"})`);
     } else {
       // ========================================
-      // 7. REGULAR CALL: Update preferences if changed
+      // 7. REGULAR CALL: Update preferences
       // ========================================
       if (extraction?.preferred_time) {
         updates.preferred_time = extraction.preferred_time;
@@ -173,24 +159,42 @@ export async function POST(request: Request): Promise<Response> {
         updates.goals = truncate(extraction.goals);
       }
 
-      // Trial countdown (only for non-onboarding trial calls)
+      // ========================================
+      // 8. TRIAL COUNTDOWN & PAYMENT TRIGGER
+      // ========================================
       if (meta.status === "trial") {
         const remaining = parseInt(meta.trial_calls_remaining || "0") - 1;
         updates.trial_calls_remaining = Math.max(0, remaining).toString();
 
         if (remaining <= 0) {
-          // TODO: Send payment link SMS via Twilio
-          console.log(`Trial ended for ${meta.phone}, should send payment link`);
+          // Trial is over - send payment SMS and block future calls
+          console.log(`Trial ended for ${meta.phone}, sending payment link...`);
+
+          // Send SMS with payment link
+          await sendPaymentSMS({
+            phone: meta.phone,
+            customerId,
+            firstName: meta.first_name,
+          });
+
+          // Change status to awaiting_payment to block future calls
+          updates.status = "awaiting_payment";
+
+          // Clear scheduling - no more calls until payment
+          updates.next_call_scheduled = "";
+          updates.qstash_message_id = "";
         }
       }
     }
 
     // ========================================
-    // 8. Schedule Next Call
+    // 9. Schedule Next Call (only if eligible)
     // ========================================
     const finalStatus = updates.status || meta.status;
     const remainingCalls = parseInt(updates.trial_calls_remaining || meta.trial_calls_remaining || "0");
 
+    // Only schedule if active OR trial with remaining calls
+    // Do NOT schedule if awaiting_payment, paused, or churned
     const shouldSchedule =
       finalStatus === "active" ||
       (finalStatus === "trial" && remainingCalls > 0);
@@ -215,7 +219,7 @@ export async function POST(request: Request): Promise<Response> {
     }
 
     // ========================================
-    // 9. Persist Updates to Stripe
+    // 10. Persist Updates to Stripe
     // ========================================
     await updateCustomerMetadata(customerId, { ...meta, ...updates });
 
@@ -223,7 +227,8 @@ export async function POST(request: Request): Promise<Response> {
       success: true,
       status: callStatus,
       persona: updates.persona || meta.persona,
-      nextCallScheduled: updates.next_call_scheduled,
+      userStatus: updates.status || meta.status,
+      nextCallScheduled: updates.next_call_scheduled || null,
     });
   } catch (error) {
     console.error("Dipler webhook error:", error);
