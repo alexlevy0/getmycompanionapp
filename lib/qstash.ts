@@ -1,4 +1,5 @@
 import { Client, Receiver } from "@upstash/qstash";
+import { log } from "./logger";
 
 const qstash = new Client({
   token: process.env.QSTASH_TOKEN!,
@@ -29,8 +30,19 @@ export async function scheduleNextCall(
   return result.messageId;
 }
 
+/**
+ * Cancels a scheduled call.
+ * Swallows errors if the message is already gone or invalid.
+ */
 export async function cancelScheduledCall(messageId: string): Promise<void> {
-  await qstash.messages.delete(messageId);
+  try {
+    await qstash.messages.delete(messageId);
+  } catch (error) {
+    log.warn("Failed to cancel scheduled call", { 
+      messageId, 
+      error: error instanceof Error ? error.message : String(error) 
+    });
+  }
 }
 
 export async function verifyQStashSignature(request: Request): Promise<boolean> {

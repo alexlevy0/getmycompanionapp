@@ -2,11 +2,10 @@ import { stripe, updateCustomerMetadata } from "@/lib/stripe";
 import { cancelScheduledCall } from "@/lib/qstash";
 import { scheduleNextCallForUser } from "@/lib/handlers/call-completed";
 import { createScopedLogger } from "@/lib/logger";
-import { config } from "@/lib/config";
-import { ERROR_MESSAGES } from "@/constants/messages";
 import { isValidTimeFormat } from "@/lib/utils";
-import type { Persona, UserStatus } from "@/types";
 import { PERSONAS } from "@/constants/personas";
+import { ERROR_MESSAGES } from "@/constants/messages";
+import type { Persona } from "@/types";
 
 const log = createScopedLogger("update-preferences");
 
@@ -59,11 +58,11 @@ export async function POST(request: Request): Promise<Response> {
 
     // 2. Parse request
     const body = await request.json();
-    const { preferredTime, persona } = body;
+    const { preferredTime, preferredDays, persona } = body;
 
     log.info("Update preferences request", { 
       customerId: customer.id, 
-      changes: { preferredTime, persona } 
+      changes: { preferredTime, preferredDays, persona } 
     });
 
     // 3. Validate inputs
@@ -78,53 +77,51 @@ export async function POST(request: Request): Promise<Response> {
     const updates: Record<string, string> = {};
     let shouldReschedule = false;
 
-    // 4. Checking for changes
+    // 4. Checking for changes requiring rescheduling
+    // Time change?
     if (preferredTime && preferredTime !== meta.preferred_time) {
       updates.preferred_time = preferredTime;
       shouldReschedule = true;
     }
 
-    if (persona && persona !== meta.persona) {
-      updates.persona = persona;
-      // Changing persona doesn't strictly require rescheduling unless we want to change the prompt immediately
-      // But keeping the same schedule is fine. Next call will pick up the new persona agent.
+    // Days change?
+    if (preferredDays && preferredDays !== meta.preferred_days) {
+      updates.preferred_days = preferredDays;
+      shouldReschedule = true;
     }
 
-    // 5. Dynamic Rescheduling
-    // Only if:
-    // - User is active or trial eligible
-    // - preferred_time changed
-    // - Call is currently scheduled
-    const canCall =
-      meta.status === "active" ||
-      (meta.status === "trial" && parseInt(meta.trial_calls_remaining) > 0);
+    // Persona change? (No rescheduling needed, just update metadata)
+    if (persona && persona !== meta.persona) {
+      updates.persona = persona;
+    }
 
-    if (shouldReschedule && canCall && meta.qstash_message_id) {
+    // 5. User Eligibility Check
+    const isEligibleForCalls =
+      meta.status === "active" ||
+      (meta.status === "trial" && parseInt(meta.trial_calls_remaining || "0") > 0);
+
+    // 6. Dynamic Rescheduling Logic
+    if (shouldReschedule && isEligibleForCalls && meta.qstash_message_id) {
       log.info("Rescheduling call due to preference change", { customerId: customer.id });
 
-      // Cancel old job
-      try {
-        await cancelScheduledCall(meta.qstash_message_id);
-      } catch (err) {
-        // Log but continue (job might already be gone)
-        log.warn("Failed to cancel old job (continuing)", { error: err });
-      }
+      // A. Cancel old job (swallows errors)
+      await cancelScheduledCall(meta.qstash_message_id);
 
-      // Schedule new job
-      // We merge current meta with updates to calculate correct time
+      // B. Schedule new job
+      // Merge current meta with updates to calculate correct next time
       const mergedMeta = { ...meta, ...updates };
       
       const scheduleResult = await scheduleNextCallForUser(
         customer.id,
         mergedMeta,
-        updates // Pass updates object to accumulate changes
+        updates // Pass updates to accumulate changes (next_call_scheduled, message_id)
       );
 
-      // scheduleNextCallForUser returns merged updates
+      // Merge schedule results into updates
       Object.assign(updates, scheduleResult);
     }
 
-    // 6. Persist updates
+    // 7. Persist updates to Stripe
     if (Object.keys(updates).length > 0) {
       await updateCustomerMetadata(customer.id, { ...meta, ...updates });
     }
@@ -133,6 +130,7 @@ export async function POST(request: Request): Promise<Response> {
       success: true,
       updated: {
         preferredTime: updates.preferred_time || meta.preferred_time,
+        preferredDays: updates.preferred_days || meta.preferred_days,
         persona: updates.persona || meta.persona,
         nextCallScheduled: updates.next_call_scheduled || meta.next_call_scheduled,
       }
