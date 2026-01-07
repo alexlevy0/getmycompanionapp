@@ -12,6 +12,7 @@
     "@stripe/react-stripe-js": "^2.8.0",
     "@stripe/stripe-js": "^4.4.0",
     "@stripe/stripe-react-native": "0.50.3",
+    "@upstash/qstash": "^2.8.4",
     "expo": "^54.0.1",
     "expo-constants": "~18.0.8",
     "expo-font": "~14.0.7",
