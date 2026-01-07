@@ -1,7 +1,18 @@
 import { findCustomerByPhone, createCustomer } from "@/lib/stripe";
 import { triggerDiplerCall } from "@/lib/dipler";
 import { validatePhone, formatPhoneE164 } from "@/lib/utils";
-import { TRIAL_CALLS } from "@/constants/personas";
+import { createScopedLogger } from "@/lib/logger";
+import { config } from "@/lib/config";
+import { ERROR_MESSAGES, SUCCESS_MESSAGES } from "@/constants/messages";
+
+const log = createScopedLogger("start-trial");
+
+/**
+ * Generates a secure auth token (UUID v4).
+ */
+function generateAuthToken(): string {
+  return crypto.randomUUID();
+}
 
 export async function POST(request: Request): Promise<Response> {
   try {
@@ -10,7 +21,7 @@ export async function POST(request: Request): Promise<Response> {
     // Validation
     if (!phone || !validatePhone(phone)) {
       return Response.json(
-        { error: "Numéro de téléphone invalide" },
+        { error: ERROR_MESSAGES.invalidPhone },
         { status: 400 }
       );
     }
@@ -27,25 +38,35 @@ export async function POST(request: Request): Promise<Response> {
         (meta.status === "trial" && parseInt(meta.trial_calls_remaining) > 0)
       ) {
         return Response.json(
-          { error: "Ce numéro est déjà enregistré" },
+          { error: ERROR_MESSAGES.alreadyRegistered },
           { status: 409 }
         );
       }
     }
 
+    // Generate unique auth token for this user
+    const authToken = generateAuthToken();
+
     // Create customer with "onboarding" status
     const metadata: Record<string, string> = {
       phone: formattedPhone,
       status: "onboarding",
-      trial_calls_remaining: TRIAL_CALLS.toString(),
+      trial_calls_remaining: config.defaults.trialCalls.toString(),
       total_calls: "0",
       consecutive_no_answer: "0",
-      timezone: "Europe/Paris",
-      preferred_time: "10:00",
-      preferred_days: "daily",
+      timezone: config.defaults.timezone,
+      preferred_time: config.defaults.preferredTime,
+      preferred_days: config.defaults.preferredDays,
+      // Secure auth token for API authentication
+      auth_token: authToken,
     };
 
     const customer = await createCustomer(metadata);
+
+    log.info("Customer created", { 
+      customerId: customer.id, 
+      phone: formattedPhone 
+    });
 
     // Trigger first call with Receptionist agent
     await triggerDiplerCall({
@@ -56,12 +77,21 @@ export async function POST(request: Request): Promise<Response> {
       },
     });
 
+    log.info("First call triggered", { customerId: customer.id });
+
+    // Return token to the client (store securely!)
     return Response.json({
       success: true,
-      message: "Vous allez recevoir un appel dans quelques instants.",
+      message: SUCCESS_MESSAGES.callTriggered,
+      token: authToken,
     });
   } catch (error) {
-    console.error("start-trial error:", error);
-    return Response.json({ error: "Une erreur est survenue" }, { status: 500 });
+    log.error("Start trial failed", { 
+      error: error instanceof Error ? error.message : String(error) 
+    });
+    return Response.json(
+      { error: ERROR_MESSAGES.internalError },
+      { status: 500 }
+    );
   }
 }
