@@ -1,26 +1,100 @@
 import { stripe, updateCustomerMetadata } from "@/lib/stripe";
 import { scheduleNextCall } from "@/lib/qstash";
 import { calculateNextCallTime } from "@/lib/utils";
-import { DiplerWebhookPayload, Persona } from "@/types";
+import {
+  DiplerWebhookPayload,
+  Persona,
+  determineCallStatus,
+} from "@/types";
 import { MAX_NO_ANSWER_RETRIES, PERSONAS } from "@/constants/personas";
+
+// ============================================
+// Constants
+// ============================================
+
+const DEFAULT_PERSONA: Persona = "friend";
+const DEFAULT_TIME = "10:00";
+const MAX_SUMMARY_LENGTH = 500; // Stripe metadata limit
+
+// ============================================
+// Helper Functions
+// ============================================
+
+/**
+ * Safely extracts persona from Dipler analysis.
+ * Returns default if not found or invalid.
+ */
+function extractPersona(payload: DiplerWebhookPayload): Persona {
+  const extraction = payload.conversation?.postConversationAnalysis?.extraction;
+  const detected = extraction?.detected_persona;
+
+  if (detected && PERSONAS[detected]) {
+    return detected;
+  }
+
+  // Fallback: try to parse from summary
+  const summary = payload.conversation?.postConversationAnalysis?.summary?.toLowerCase() || "";
+
+  if (summary.includes("coach") || summary.includes("motivation") || summary.includes("sport")) {
+    return "coach";
+  }
+  if (summary.includes("mentor") || summary.includes("carrière") || summary.includes("études")) {
+    return "mentor";
+  }
+  if (summary.includes("compagnon") || summary.includes("senior") || summary.includes("famille")) {
+    return "companion";
+  }
+
+  return DEFAULT_PERSONA;
+}
+
+/**
+ * Truncates string to Stripe metadata limit.
+ */
+function truncate(str: string | undefined, maxLength: number = MAX_SUMMARY_LENGTH): string {
+  if (!str) return "";
+  return str.length > maxLength ? str.slice(0, maxLength) : str;
+}
+
+// ============================================
+// Webhook Handler
+// ============================================
 
 export async function POST(request: Request): Promise<Response> {
   try {
     const payload: DiplerWebhookPayload = await request.json();
-    const { customer_id, status, summary, extracted_data } = payload;
 
-    // Get customer
-    const customer = await stripe.customers.retrieve(customer_id);
+    // ========================================
+    // 1. Parse customerId from metadata
+    // ========================================
+    const customerId = payload.metadata?.customerId;
+    if (!customerId) {
+      console.error("Dipler webhook: Missing customerId in metadata");
+      return Response.json({ error: "Missing customerId" }, { status: 400 });
+    }
+
+    // ========================================
+    // 2. Retrieve Stripe Customer
+    // ========================================
+    const customer = await stripe.customers.retrieve(customerId);
     if (customer.deleted) {
+      console.error(`Dipler webhook: Customer ${customerId} was deleted`);
       return new Response("Customer not found", { status: 404 });
     }
 
     const meta = customer.metadata;
     const updates: Record<string, string> = {};
-    const isOnboarding = meta.status === "onboarding";
 
-    // Handle no-answer
-    if (status === "no_answer") {
+    // ========================================
+    // 3. Determine Call Status
+    // ========================================
+    const callStatus = determineCallStatus(payload);
+    console.log(`Dipler webhook: ${meta.phone} - status: ${callStatus}`);
+
+    // ========================================
+    // 4. Handle NO-ANSWER / FAILED
+    // ========================================
+    if (callStatus === "no_answer" || callStatus === "failed") {
       const noAnswerCount = parseInt(meta.consecutive_no_answer || "0") + 1;
       updates.consecutive_no_answer = noAnswerCount.toString();
 
@@ -29,123 +103,130 @@ export async function POST(request: Request): Promise<Response> {
         const retryTime = new Date(Date.now() + 60 * 60 * 1000);
         const messageId = await scheduleNextCall({
           phone: meta.phone,
-          customerId: customer_id,
+          customerId,
           scheduledFor: retryTime,
         });
         updates.qstash_message_id = messageId;
         updates.next_call_scheduled = retryTime.toISOString();
+        console.log(`Scheduling retry ${noAnswerCount}/${MAX_NO_ANSWER_RETRIES} for ${meta.phone}`);
       } else {
         updates.status = "paused";
+        console.log(`Max retries reached for ${meta.phone}, pausing`);
       }
 
-      await updateCustomerMetadata(customer_id, { ...meta, ...updates });
-      return Response.json({ handled: "no_answer" });
+      await updateCustomerMetadata(customerId, { ...meta, ...updates });
+      return Response.json({ handled: callStatus, retryScheduled: noAnswerCount < MAX_NO_ANSWER_RETRIES });
     }
 
-    // Handle completed call
-    if (status === "completed") {
-      const totalCalls = parseInt(meta.total_calls || "0") + 1;
+    // ========================================
+    // 5. Handle COMPLETED Call
+    // ========================================
+    const analysis = payload.conversation?.postConversationAnalysis;
+    const extraction = analysis?.extraction;
+    const isOnboarding = meta.status === "onboarding";
 
-      updates.total_calls = totalCalls.toString();
-      updates.last_call_date = new Date().toISOString();
-      updates.consecutive_no_answer = "0";
+    // Reset no-answer counter
+    updates.consecutive_no_answer = "0";
+    updates.total_calls = (parseInt(meta.total_calls || "0") + 1).toString();
+    updates.last_call_date = new Date().toISOString();
 
-      if (summary) {
-        updates.last_call_summary = summary.slice(0, 500);
+    // Save summary (truncated for Stripe)
+    if (analysis?.summary) {
+      updates.last_call_summary = truncate(analysis.summary);
+    }
+
+    // ========================================
+    // 6. ONBOARDING: Receptionist Logic
+    // ========================================
+    if (isOnboarding) {
+      // Extract persona from analysis
+      const persona = extractPersona(payload);
+      updates.persona = persona;
+      updates.status = "trial"; // Transition to trial
+
+      // Extract user info
+      if (extraction?.user_name) {
+        updates.first_name = extraction.user_name;
       }
 
-      // ============================================
-      // VOICE-FIRST ONBOARDING: Handle Receptionist response
-      // ============================================
-      if (isOnboarding && extracted_data) {
-        // Receptionist agent detected the best persona for this user
-        if (extracted_data.detected_persona) {
-          const detectedPersona = extracted_data.detected_persona as Persona;
-          
-          // Validate the detected persona
-          if (PERSONAS[detectedPersona]) {
-            updates.persona = detectedPersona;
-            updates.status = "trial"; // Move from onboarding to trial
-            
-            // Apply persona-specific defaults if not already extracted
-            if (!extracted_data.preferred_time) {
-              updates.preferred_time = PERSONAS[detectedPersona].defaultTime;
-            }
-            if (!extracted_data.preferred_days) {
-              updates.preferred_days = PERSONAS[detectedPersona].defaultDays;
-            }
-            
-            console.log(`Onboarding complete: ${meta.phone} → ${detectedPersona}`);
-          } else {
-            // Fallback to "friend" if invalid persona detected
-            updates.persona = "friend";
-            updates.status = "trial";
-            console.log(`Invalid persona detected, defaulting to friend: ${meta.phone}`);
-          }
-        } else {
-          // No persona detected - default to "friend"
-          updates.persona = "friend";
-          updates.status = "trial";
-          console.log(`No persona detected, defaulting to friend: ${meta.phone}`);
-        }
+      // Extract preferences (or use persona defaults)
+      updates.preferred_time = extraction?.preferred_time || PERSONAS[persona].defaultTime;
+      updates.preferred_days = extraction?.preferred_days || PERSONAS[persona].defaultDays;
+
+      // Extract goals if present (for coach/mentor)
+      if (extraction?.goals) {
+        updates.goals = truncate(extraction.goals);
       }
 
-      // Update extracted preferences (for all calls)
-      if (extracted_data) {
-        if (extracted_data.preferred_time)
-          updates.preferred_time = extracted_data.preferred_time;
-        if (extracted_data.preferred_days)
-          updates.preferred_days = extracted_data.preferred_days;
-        if (extracted_data.first_name)
-          updates.first_name = extracted_data.first_name;
-        if (extracted_data.goals) 
-          updates.goals = extracted_data.goals;
+      console.log(`Onboarding complete: ${meta.phone} → ${persona} (${updates.first_name || "unnamed"})`);
+    } else {
+      // ========================================
+      // 7. REGULAR CALL: Update preferences if changed
+      // ========================================
+      if (extraction?.preferred_time) {
+        updates.preferred_time = extraction.preferred_time;
+      }
+      if (extraction?.preferred_days) {
+        updates.preferred_days = extraction.preferred_days;
+      }
+      if (extraction?.goals) {
+        updates.goals = truncate(extraction.goals);
       }
 
-      // Handle trial countdown (only for trial status, not onboarding)
-      const currentStatus = updates.status || meta.status;
-      if (currentStatus === "trial" && !isOnboarding) {
-        // Only decrement trial calls for non-onboarding calls
-        const remaining = parseInt(meta.trial_calls_remaining) - 1;
-        updates.trial_calls_remaining = remaining.toString();
+      // Trial countdown (only for non-onboarding trial calls)
+      if (meta.status === "trial") {
+        const remaining = parseInt(meta.trial_calls_remaining || "0") - 1;
+        updates.trial_calls_remaining = Math.max(0, remaining).toString();
 
         if (remaining <= 0) {
-          // TODO: Send payment SMS via Twilio
-          console.log(
-            `Trial ended for ${meta.phone}, should send payment link`
-          );
+          // TODO: Send payment link SMS via Twilio
+          console.log(`Trial ended for ${meta.phone}, should send payment link`);
         }
       }
-
-      // Schedule next call if eligible
-      const finalStatus = updates.status || meta.status;
-      const shouldSchedule =
-        finalStatus === "active" ||
-        (finalStatus === "trial" &&
-          parseInt(updates.trial_calls_remaining || meta.trial_calls_remaining) > 0);
-
-      if (shouldSchedule) {
-        const nextTime = calculateNextCallTime(
-          updates.preferred_time || meta.preferred_time,
-          updates.preferred_days || meta.preferred_days,
-          meta.timezone
-        );
-
-        const messageId = await scheduleNextCall({
-          phone: meta.phone,
-          customerId: customer_id,
-          scheduledFor: nextTime,
-        });
-        updates.next_call_scheduled = nextTime.toISOString();
-        updates.qstash_message_id = messageId;
-      }
-
-      await updateCustomerMetadata(customer_id, { ...meta, ...updates });
     }
 
-    return Response.json({ success: true });
+    // ========================================
+    // 8. Schedule Next Call
+    // ========================================
+    const finalStatus = updates.status || meta.status;
+    const remainingCalls = parseInt(updates.trial_calls_remaining || meta.trial_calls_remaining || "0");
+
+    const shouldSchedule =
+      finalStatus === "active" ||
+      (finalStatus === "trial" && remainingCalls > 0);
+
+    if (shouldSchedule) {
+      const nextTime = calculateNextCallTime(
+        updates.preferred_time || meta.preferred_time || DEFAULT_TIME,
+        updates.preferred_days || meta.preferred_days || "daily",
+        meta.timezone || "Europe/Paris"
+      );
+
+      const messageId = await scheduleNextCall({
+        phone: meta.phone,
+        customerId,
+        scheduledFor: nextTime,
+      });
+
+      updates.next_call_scheduled = nextTime.toISOString();
+      updates.qstash_message_id = messageId;
+
+      console.log(`Scheduled next call for ${meta.phone} at ${nextTime.toISOString()}`);
+    }
+
+    // ========================================
+    // 9. Persist Updates to Stripe
+    // ========================================
+    await updateCustomerMetadata(customerId, { ...meta, ...updates });
+
+    return Response.json({
+      success: true,
+      status: callStatus,
+      persona: updates.persona || meta.persona,
+      nextCallScheduled: updates.next_call_scheduled,
+    });
   } catch (error) {
-    console.error("dipler webhook error:", error);
+    console.error("Dipler webhook error:", error);
     return Response.json(
       { error: "Webhook processing failed" },
       { status: 500 }

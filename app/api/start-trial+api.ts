@@ -33,27 +33,27 @@ export async function POST(request: Request): Promise<Response> {
       }
     }
 
-    // Create customer with "onboarding" status - no persona yet
-    // Persona will be determined by Receptionist agent during first call
+    // Create customer with "onboarding" status
     const metadata: Record<string, string> = {
       phone: formattedPhone,
-      // No persona yet - will be set by Receptionist webhook
       status: "onboarding",
       trial_calls_remaining: TRIAL_CALLS.toString(),
       total_calls: "0",
       consecutive_no_answer: "0",
       timezone: "Europe/Paris",
-      preferred_time: "10:00", // Default, will be updated by Receptionist
+      preferred_time: "10:00",
       preferred_days: "daily",
     };
 
     const customer = await createCustomer(metadata);
 
-    // Trigger first call with Receptionist agent (isFirstCall = true)
+    // Trigger first call with Receptionist agent
     await triggerDiplerCall({
       phone: formattedPhone,
-      customerId: customer.id,
-      isFirstCall: true, // This triggers the Receptionist agent
+      isFirstCall: true,
+      metadata: {
+        customerId: customer.id,
+      },
     });
 
     return Response.json({
