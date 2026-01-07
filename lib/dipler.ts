@@ -1,10 +1,10 @@
 import { Persona } from "../types";
-import { PERSONAS } from "../constants/personas";
+import { PERSONAS, RECEPTIONIST_AGENT_ENV_KEY } from "../constants/personas";
 
 interface TriggerCallParams {
   phone: string;
   customerId: string;
-  persona: Persona;
+  persona?: Persona; // Optional - if not provided, uses Receptionist
   isFirstCall: boolean;
   context?: string;
 }
@@ -12,10 +12,21 @@ interface TriggerCallParams {
 export async function triggerDiplerCall(params: TriggerCallParams): Promise<void> {
   const { phone, customerId, persona, isFirstCall, context } = params;
 
-  const agentId = process.env[PERSONAS[persona].diplerAgentEnvKey];
-
-  if (!agentId) {
-    throw new Error(`No Dipler agent configured for persona: ${persona}`);
+  // Use Receptionist agent for first call (onboarding), otherwise use persona agent
+  let agentId: string | undefined;
+  
+  if (isFirstCall || !persona) {
+    // First call uses Receptionist for voice-first onboarding
+    agentId = process.env[RECEPTIONIST_AGENT_ENV_KEY];
+    if (!agentId) {
+      throw new Error("No Dipler Receptionist agent configured");
+    }
+  } else {
+    // Subsequent calls use the assigned persona agent
+    agentId = process.env[PERSONAS[persona].diplerAgentEnvKey];
+    if (!agentId) {
+      throw new Error(`No Dipler agent configured for persona: ${persona}`);
+    }
   }
 
   const response = await fetch("https://api.dipler.io/v1/calls", {

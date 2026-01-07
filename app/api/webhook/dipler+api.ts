@@ -1,8 +1,8 @@
 import { stripe, updateCustomerMetadata } from "@/lib/stripe";
 import { scheduleNextCall } from "@/lib/qstash";
 import { calculateNextCallTime } from "@/lib/utils";
-import { DiplerWebhookPayload } from "@/types";
-import { MAX_NO_ANSWER_RETRIES } from "@/constants/personas";
+import { DiplerWebhookPayload, Persona } from "@/types";
+import { MAX_NO_ANSWER_RETRIES, PERSONAS } from "@/constants/personas";
 
 export async function POST(request: Request): Promise<Response> {
   try {
@@ -17,6 +17,7 @@ export async function POST(request: Request): Promise<Response> {
 
     const meta = customer.metadata;
     const updates: Record<string, string> = {};
+    const isOnboarding = meta.status === "onboarding";
 
     // Handle no-answer
     if (status === "no_answer") {
@@ -53,7 +54,43 @@ export async function POST(request: Request): Promise<Response> {
         updates.last_call_summary = summary.slice(0, 500);
       }
 
-      // Update extracted preferences
+      // ============================================
+      // VOICE-FIRST ONBOARDING: Handle Receptionist response
+      // ============================================
+      if (isOnboarding && extracted_data) {
+        // Receptionist agent detected the best persona for this user
+        if (extracted_data.detected_persona) {
+          const detectedPersona = extracted_data.detected_persona as Persona;
+          
+          // Validate the detected persona
+          if (PERSONAS[detectedPersona]) {
+            updates.persona = detectedPersona;
+            updates.status = "trial"; // Move from onboarding to trial
+            
+            // Apply persona-specific defaults if not already extracted
+            if (!extracted_data.preferred_time) {
+              updates.preferred_time = PERSONAS[detectedPersona].defaultTime;
+            }
+            if (!extracted_data.preferred_days) {
+              updates.preferred_days = PERSONAS[detectedPersona].defaultDays;
+            }
+            
+            console.log(`Onboarding complete: ${meta.phone} → ${detectedPersona}`);
+          } else {
+            // Fallback to "friend" if invalid persona detected
+            updates.persona = "friend";
+            updates.status = "trial";
+            console.log(`Invalid persona detected, defaulting to friend: ${meta.phone}`);
+          }
+        } else {
+          // No persona detected - default to "friend"
+          updates.persona = "friend";
+          updates.status = "trial";
+          console.log(`No persona detected, defaulting to friend: ${meta.phone}`);
+        }
+      }
+
+      // Update extracted preferences (for all calls)
       if (extracted_data) {
         if (extracted_data.preferred_time)
           updates.preferred_time = extracted_data.preferred_time;
@@ -61,11 +98,14 @@ export async function POST(request: Request): Promise<Response> {
           updates.preferred_days = extracted_data.preferred_days;
         if (extracted_data.first_name)
           updates.first_name = extracted_data.first_name;
-        if (extracted_data.goals) updates.goals = extracted_data.goals;
+        if (extracted_data.goals) 
+          updates.goals = extracted_data.goals;
       }
 
-      // Handle trial countdown
-      if (meta.status === "trial") {
+      // Handle trial countdown (only for trial status, not onboarding)
+      const currentStatus = updates.status || meta.status;
+      if (currentStatus === "trial" && !isOnboarding) {
+        // Only decrement trial calls for non-onboarding calls
         const remaining = parseInt(meta.trial_calls_remaining) - 1;
         updates.trial_calls_remaining = remaining.toString();
 
@@ -78,11 +118,11 @@ export async function POST(request: Request): Promise<Response> {
       }
 
       // Schedule next call if eligible
+      const finalStatus = updates.status || meta.status;
       const shouldSchedule =
-        meta.status === "active" ||
-        (meta.status === "trial" &&
-          parseInt(updates.trial_calls_remaining || meta.trial_calls_remaining) >
-            0);
+        finalStatus === "active" ||
+        (finalStatus === "trial" &&
+          parseInt(updates.trial_calls_remaining || meta.trial_calls_remaining) > 0);
 
       if (shouldSchedule) {
         const nextTime = calculateNextCallTime(

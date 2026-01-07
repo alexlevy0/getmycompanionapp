@@ -1,10 +1,10 @@
 export type Persona = "companion" | "coach" | "mentor" | "friend";
 
-export type UserStatus = "trial" | "active" | "paused" | "churned";
+export type UserStatus = "onboarding" | "trial" | "active" | "paused" | "churned";
 
 export interface UserMetadata {
   phone: string;
-  persona: Persona;
+  persona?: Persona; // Optional until determined by Receptionist
   first_name?: string;
 
   preferred_time: string;
@@ -42,5 +42,7 @@ export interface DiplerWebhookPayload {
     preferred_days?: string;
     first_name?: string;
     goals?: string;
+    // Receptionist agent extracts the detected persona
+    detected_persona?: Persona;
   };
 }

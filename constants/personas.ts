@@ -49,5 +49,8 @@ export const PERSONAS: Record<Persona, PersonaConfig> = {
   },
 };
 
+// Receptionist agent for voice-first onboarding
+export const RECEPTIONIST_AGENT_ENV_KEY = "DIPLER_AGENT_RECEPTIONIST";
+
 export const TRIAL_CALLS = 3;
 export const MAX_NO_ANSWER_RETRIES = 3;

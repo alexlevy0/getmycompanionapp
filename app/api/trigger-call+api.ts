@@ -21,12 +21,18 @@ export async function POST(request: Request): Promise<Response> {
 
     const meta = customer.metadata;
 
-    // Check eligibility
+    // Check eligibility - must have a persona assigned (not still onboarding)
+    if (meta.status === "onboarding") {
+      console.log(`Skipping scheduled call for ${phone}: still onboarding`);
+      return Response.json({ skipped: true, reason: "still_onboarding" });
+    }
+
     const canCall =
       meta.status === "active" ||
       (meta.status === "trial" && parseInt(meta.trial_calls_remaining) > 0);
 
     if (!canCall) {
+      console.log(`Skipping call for ${phone}: not eligible`);
       return Response.json({ skipped: true, reason: "not_eligible" });
     }
 
@@ -35,11 +41,11 @@ export async function POST(request: Request): Promise<Response> {
       ? `Résumé du dernier appel: ${meta.last_call_summary}`
       : undefined;
 
-    // Trigger call with persona
+    // Trigger call with assigned persona (isFirstCall = false)
     await triggerDiplerCall({
       phone: meta.phone,
       customerId: customer.id,
-      persona: (meta.persona as Persona) || "friend",
+      persona: meta.persona as Persona,
       isFirstCall: false,
       context,
     });
