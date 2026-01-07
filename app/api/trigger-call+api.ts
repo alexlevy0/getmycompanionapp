@@ -1,12 +1,11 @@
 import { stripe } from "@/lib/stripe";
 import { verifyQStashSignature } from "@/lib/qstash";
-import { triggerDiplerCall, getPersonaAgentId } from "@/lib/dipler";
-import { Persona } from "@/types";
+import { triggerDiplerCall } from "@/lib/dipler";
 
 // ============================================
 // Statuses that block calls (require payment)
 // ============================================
-const BLOCKED_STATUSES = ["paused", "awaiting_payment", "churned", "onboarding"];
+const BLOCKED_STATUSES = new Set(["paused", "awaiting_payment", "churned", "onboarding"]);
 
 export async function POST(request: Request): Promise<Response> {
   try {
@@ -35,7 +34,7 @@ export async function POST(request: Request): Promise<Response> {
     // ========================================
     // 3. Check for Blocked Status
     // ========================================
-    if (BLOCKED_STATUSES.includes(meta.status)) {
+    if (BLOCKED_STATUSES.has(meta.status)) {
       console.log(
         `trigger-call: Skipping ${phone} - status: ${meta.status}`
       );
@@ -58,7 +57,7 @@ export async function POST(request: Request): Promise<Response> {
     // 4. Check Trial Eligibility
     // ========================================
     if (meta.status === "trial") {
-      const remaining = parseInt(meta.trial_calls_remaining || "0");
+      const remaining = Number.parseInt(meta.trial_calls_remaining || "0", 10);
       if (remaining <= 0) {
         console.log(`trigger-call: Skipping ${phone} - no trial calls remaining`);
         return Response.json({ skipped: true, reason: "no_trial_calls" });
@@ -76,28 +75,18 @@ export async function POST(request: Request): Promise<Response> {
     }
 
     // ========================================
-    // 6. Build Context & Trigger Call
+    // 6. Trigger Call
     // ========================================
-    const context = meta.last_call_summary
-      ? `Résumé du dernier appel: ${meta.last_call_summary}`
-      : undefined;
+    const result = await triggerDiplerCall(meta.phone);
 
-    const persona = (meta.persona as Persona) || "friend";
-    const agentId = getPersonaAgentId(persona);
+    if (!result.success) {
+      console.error(`trigger-call: Dipler error for ${phone}:`, result.error);
+      return Response.json({ error: result.error }, { status: 500 });
+    }
 
-    await triggerDiplerCall({
-      phone: meta.phone,
-      agentId,
-      context,
-      metadata: {
-        customerId: customer.id,
-        persona,
-      },
-    });
+    console.log(`trigger-call: Call triggered for ${phone}`);
 
-    console.log(`trigger-call: Call triggered for ${phone} with persona ${persona}`);
-
-    return Response.json({ success: true, persona });
+    return Response.json({ success: true });
   } catch (error) {
     console.error("trigger-call error:", error);
     return Response.json(

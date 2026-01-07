@@ -17,8 +17,7 @@ import { SettingsModal } from "@/components/SettingsModal";
 import { StatusCard } from "@/components/dashboard/StatusCard";
 import { NextCallCard } from "@/components/dashboard/NextCallCard";
 import { StatsRow } from "@/components/dashboard/StatsRow";
-import { PersonaCard } from "@/components/dashboard/PersonaCard";
-import type { UserStatus as UserStatusType, Persona } from "@/types";
+import type { UserStatus as UserStatusType } from "@/types";
 
 // ============================================
 // Types
@@ -26,7 +25,6 @@ import type { UserStatus as UserStatusType, Persona } from "@/types";
 
 interface UserData {
   status: UserStatusType;
-  persona?: Persona;
   firstName?: string;
   phone: string;
   nextCallScheduled?: string;
@@ -236,7 +234,7 @@ export default function HomeScreen() {
     setRefreshing(false);
   }, []);
 
-  const handleUpdatePreferences = async (updates: { preferredTime: string; persona: string }) => {
+  const handleUpdatePreferences = async (updates: { preferredTime: string }) => {
     try {
       const token = await getAuthToken();
       if (!token) return;
@@ -434,11 +432,7 @@ export default function HomeScreen() {
           preferredTime={userStatus.preferredTime} 
         />
 
-        {/* Persona */}
-        <PersonaCard 
-          persona={userStatus.persona} 
-          onModify={() => setIsSettingsModalVisible(true)} 
-        />
+
 
       </ScrollView>
 
@@ -448,7 +442,6 @@ export default function HomeScreen() {
         onClose={() => setIsSettingsModalVisible(false)}
         currentSettings={{
           preferredTime: userStatus.preferredTime,
-          persona: userStatus.persona,
         }}
         onUpdate={handleUpdatePreferences}
       />

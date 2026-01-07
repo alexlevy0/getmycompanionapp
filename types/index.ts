@@ -2,13 +2,10 @@
 // User & Status Types
 // ============================================
 
-export type Persona = "companion" | "coach" | "mentor" | "friend";
-
 export type UserStatus = "onboarding" | "trial" | "active" | "paused" | "churned" | "awaiting_payment";
 
 export interface UserMetadata {
   phone: string;
-  persona?: Persona;
   first_name?: string;
 
   preferred_time: string;
@@ -22,7 +19,7 @@ export interface UserMetadata {
   last_call_date?: string;
   last_call_summary?: string;
 
-  // Persona-specific
+  // Preferences
   goals?: string;
   habits_streak?: string;
   family_contact_phone?: string;
@@ -43,7 +40,6 @@ export interface UserMetadata {
  * The Receptionist agent populates these fields during onboarding.
  */
 export interface DiplerExtraction {
-  detected_persona?: Persona;
   user_name?: string;
   preferred_time?: string;
   preferred_days?: string;

@@ -1,58 +1,14 @@
-import { PERSONAS, RECEPTIONIST_AGENT_ENV_KEY } from "../constants/personas";
-import { Persona } from "../types";
+import { formatPhoneE164 } from './utils';
 
 // ============================================
-// Trigger Call Parameters
+// Dipler Call Result Interface
 // ============================================
 
-interface TriggerCallParams {
-  phone: string;
-  agentId?: string; // Optional - defaults to Receptionist if isFirstCall
-  context?: string;
-  metadata?: Record<string, string>; // For passing customerId, isFirstCall, etc.
-  isFirstCall?: boolean; // Convenience flag for Receptionist routing
-}
-
-// ============================================
-// Get Agent ID Helper
-// ============================================
-
-/**
- * Resolves the Dipler agent ID to use for the call.
- * Priority: explicit agentId > persona agent > receptionist (first call)
- */
-function resolveAgentId(params: TriggerCallParams): string {
-  const { agentId, isFirstCall, metadata } = params;
-
-  // 1. Explicit agent ID provided
-  if (agentId) {
-    return agentId;
-  }
-
-  // 2. First call uses Receptionist
-  if (isFirstCall) {
-    const receptionist = process.env[RECEPTIONIST_AGENT_ENV_KEY];
-    if (!receptionist) {
-      throw new Error("DIPLER_AGENT_RECEPTIONIST not configured");
-    }
-    return receptionist;
-  }
-
-  // 3. Check if persona is in metadata (for scheduled calls)
-  const persona = metadata?.persona as Persona | undefined;
-  if (persona && PERSONAS[persona]) {
-    const personaAgent = process.env[PERSONAS[persona].diplerAgentEnvKey];
-    if (personaAgent) {
-      return personaAgent;
-    }
-  }
-
-  // 4. Fallback to Receptionist
-  const fallback = process.env[RECEPTIONIST_AGENT_ENV_KEY];
-  if (!fallback) {
-    throw new Error("No Dipler agent configured");
-  }
-  return fallback;
+interface DiplerCallResult {
+  success: boolean;
+  data?: unknown;
+  error?: string;
+  futureConversationId?: string;
 }
 
 // ============================================
@@ -60,68 +16,89 @@ function resolveAgentId(params: TriggerCallParams): string {
 // ============================================
 
 /**
- * Triggers a Dipler call with the specified parameters.
+ * Triggers a Dipler call via Twilio integration.
  * 
- * @param params.phone - Phone number in E.164 format
- * @param params.agentId - Optional explicit agent ID
- * @param params.context - Optional context for the agent
- * @param params.metadata - Metadata to pass through (returned in webhook)
- * @param params.isFirstCall - If true, uses Receptionist agent
+ * @param toPhoneNumber - Phone number to call (will be normalized to E.164 format)
+ * @returns Promise with call result including success status and optional conversation ID
  */
-export async function triggerDiplerCall(params: TriggerCallParams): Promise<void> {
-  const { phone, context, metadata = {} } = params;
+export async function triggerDiplerCall(
+  toPhoneNumber: string
+): Promise<DiplerCallResult> {
+  const normalizedPhoneNumber = formatPhoneE164(toPhoneNumber);
 
-  const agentId = resolveAgentId(params);
-
-  // Ensure customerId is passed for webhook processing
-  if (!metadata.customerId) {
-    console.warn("triggerDiplerCall: No customerId in metadata");
+  const phoneRegex = /^\+[1-9]\d{1,14}$/;
+  if (!phoneRegex.test(normalizedPhoneNumber)) {
+    return {
+      success: false,
+      error: 'Invalid phone number format for internal call.'
+    };
   }
 
-  const response = await fetch("https://api.dipler.io/v1/calls", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${process.env.DIPLER_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      agent_id: agentId,
-      phone_number: phone,
-      webhook_url: `${process.env.API_BASE_URL}/api/webhook/dipler`,
-      metadata: {
-        ...metadata,
-        isFirstCall: params.isFirstCall ? "true" : "false",
+  const diplerConfig = {
+    url: process.env.DIPLER_API_URL || 'https://dipler-backend-203319928451.europe-west9.run.app',
+    token: process.env.DIPLER_API_TOKEN,
+    fromPhoneNumber: process.env.DIPLER_FROM_PHONE,
+    agentId: process.env.DIPLER_AGENT_ID,
+    workspaceId: process.env.DIPLER_WORKSPACE_ID,
+  };
+
+  if (!diplerConfig.token || !diplerConfig.fromPhoneNumber || !diplerConfig.agentId || !diplerConfig.workspaceId) {
+    console.error('[DIPLER] Missing environment variables for Dipler API');
+    return {
+      success: false,
+      error: 'Invalid server configuration'
+    };
+  }
+
+  const payload = {
+    fromPhoneNumber: diplerConfig.fromPhoneNumber,
+    toPhoneNumber: normalizedPhoneNumber,
+    agentId: diplerConfig.agentId,
+    workspaceId: diplerConfig.workspaceId,
+  };
+  console.log('[DIPLER] Call payload:', payload);
+
+  try {
+    const response = await fetch(diplerConfig.url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${diplerConfig.token}`,
       },
-      ...(context && { context }),
-    }),
-  });
+      body: JSON.stringify({
+        service: 'twilio',
+        action: 'makeCall',
+        payload,
+      }),
+    });
 
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`Dipler API error: ${error}`);
-  }
-}
+    const data = await response.json();
 
-// ============================================
-// Agent ID Getters (for explicit use)
-// ============================================
+    if (!response.ok) {
+      console.error('[DIPLER] API error:', data);
+      return {
+        success: false,
+        error: 'Error during internal phone call'
+      };
+    }
 
-export function getReceptionistAgentId(): string {
-  const agentId = process.env[RECEPTIONIST_AGENT_ENV_KEY];
-  if (!agentId) {
-    throw new Error("DIPLER_AGENT_RECEPTIONIST not configured");
+    return {
+      success: true,
+      data,
+      futureConversationId: data.futureConversationId
+    };
+  } catch (error: unknown) {
+    if (error instanceof Error) {
+      console.error('[DIPLER] API error:', error);
+      return {
+        success: false,
+        error: `Internal server error: ${error.message}`
+      };
+    }
+    console.error('[DIPLER] API error:', error);
+    return {
+      success: false,
+      error: 'Internal server error: Unknown error'
+    };
   }
-  return agentId;
-}
-
-export function getPersonaAgentId(persona: Persona): string {
-  const config = PERSONAS[persona];
-  if (!config) {
-    throw new Error(`Unknown persona: ${persona}`);
-  }
-  const agentId = process.env[config.diplerAgentEnvKey];
-  if (!agentId) {
-    throw new Error(`Agent not configured for persona: ${persona}`);
-  }
-  return agentId;
 }

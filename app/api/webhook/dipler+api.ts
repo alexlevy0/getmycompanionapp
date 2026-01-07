@@ -1,50 +1,22 @@
 import { stripe, updateCustomerMetadata } from "@/lib/stripe";
 import { scheduleNextCall } from "@/lib/qstash";
-import { sendPaymentSMS } from "@/lib/twilio";
+import { sendPaymentSMS, sendNotificationSMS } from "@/lib/twilio";
 import { calculateNextCallTime, calculateRetryTime } from "@/lib/utils";
-import { sendNotificationSMS } from "@/lib/twilio";
-import {
-  DiplerWebhookPayload,
-  Persona,
-  determineCallStatus,
-} from "@/types";
-import { MAX_NO_ANSWER_RETRIES, PERSONAS } from "@/constants/personas";
+import { DiplerWebhookPayload, determineCallStatus } from "@/types";
 import { SMS_TEMPLATES } from "@/constants/messages";
 
 // ============================================
 // Constants
 // ============================================
 
-const DEFAULT_PERSONA: Persona = "friend";
 const DEFAULT_TIME = "10:00";
+const DEFAULT_DAYS = "daily";
 const MAX_SUMMARY_LENGTH = 500;
+const MAX_NO_ANSWER_RETRIES = 3;
 
 // ============================================
 // Helper Functions
 // ============================================
-
-function extractPersona(payload: DiplerWebhookPayload): Persona {
-  const extraction = payload.conversation?.postConversationAnalysis?.extraction;
-  const detected = extraction?.detected_persona;
-
-  if (detected && PERSONAS[detected]) {
-    return detected;
-  }
-
-  const summary = payload.conversation?.postConversationAnalysis?.summary?.toLowerCase() || "";
-
-  if (summary.includes("coach") || summary.includes("motivation") || summary.includes("sport")) {
-    return "coach";
-  }
-  if (summary.includes("mentor") || summary.includes("carrière") || summary.includes("études")) {
-    return "mentor";
-  }
-  if (summary.includes("compagnon") || summary.includes("senior") || summary.includes("famille")) {
-    return "companion";
-  }
-
-  return DEFAULT_PERSONA;
-}
 
 function truncate(str: string | undefined, maxLength: number = MAX_SUMMARY_LENGTH): string {
   if (!str) return "";
@@ -90,7 +62,7 @@ export async function POST(request: Request): Promise<Response> {
     // 4. Handle NO-ANSWER / FAILED
     // ========================================
     if (callStatus === "no_answer" || callStatus === "failed") {
-      const noAnswerCount = parseInt(meta.consecutive_no_answer || "0") + 1;
+      const noAnswerCount = Number.parseInt(meta.consecutive_no_answer || "0", 10) + 1;
       updates.consecutive_no_answer = noAnswerCount.toString();
 
       if (noAnswerCount < MAX_NO_ANSWER_RETRIES) {
@@ -137,7 +109,7 @@ export async function POST(request: Request): Promise<Response> {
     const isOnboarding = meta.status === "onboarding";
 
     updates.consecutive_no_answer = "0";
-    updates.total_calls = (parseInt(meta.total_calls || "0") + 1).toString();
+    updates.total_calls = (Number.parseInt(meta.total_calls || "0", 10) + 1).toString();
     updates.last_call_date = new Date().toISOString();
 
     if (analysis?.summary) {
@@ -145,25 +117,23 @@ export async function POST(request: Request): Promise<Response> {
     }
 
     // ========================================
-    // 6. ONBOARDING: Receptionist Logic
+    // 6. ONBOARDING: Complete and move to trial
     // ========================================
     if (isOnboarding) {
-      const persona = extractPersona(payload);
-      updates.persona = persona;
       updates.status = "trial";
 
       if (extraction?.user_name) {
         updates.first_name = extraction.user_name;
       }
 
-      updates.preferred_time = extraction?.preferred_time || PERSONAS[persona].defaultTime;
-      updates.preferred_days = extraction?.preferred_days || PERSONAS[persona].defaultDays;
+      updates.preferred_time = extraction?.preferred_time || DEFAULT_TIME;
+      updates.preferred_days = extraction?.preferred_days || DEFAULT_DAYS;
 
       if (extraction?.goals) {
         updates.goals = truncate(extraction.goals);
       }
 
-      console.log(`Onboarding complete: ${meta.phone} → ${persona} (${updates.first_name || "unnamed"})`);
+      console.log(`Onboarding complete: ${meta.phone} (${updates.first_name || "unnamed"})`);
     } else {
       // ========================================
       // 7. REGULAR CALL: Update preferences
@@ -182,7 +152,7 @@ export async function POST(request: Request): Promise<Response> {
       // 8. TRIAL COUNTDOWN & PAYMENT TRIGGER
       // ========================================
       if (meta.status === "trial") {
-        const remaining = parseInt(meta.trial_calls_remaining || "0") - 1;
+        const remaining = Number.parseInt(meta.trial_calls_remaining || "0", 10) - 1;
         updates.trial_calls_remaining = Math.max(0, remaining).toString();
 
         if (remaining <= 0) {
@@ -210,7 +180,7 @@ export async function POST(request: Request): Promise<Response> {
     // 9. Schedule Next Call (only if eligible)
     // ========================================
     const finalStatus = updates.status || meta.status;
-    const remainingCalls = parseInt(updates.trial_calls_remaining || meta.trial_calls_remaining || "0");
+    const remainingCalls = Number.parseInt(updates.trial_calls_remaining || meta.trial_calls_remaining || "0", 10);
 
     // Only schedule if active OR trial with remaining calls
     // Do NOT schedule if awaiting_payment, paused, or churned
@@ -221,7 +191,7 @@ export async function POST(request: Request): Promise<Response> {
     if (shouldSchedule) {
       const nextTime = calculateNextCallTime(
         updates.preferred_time || meta.preferred_time || DEFAULT_TIME,
-        updates.preferred_days || meta.preferred_days || "daily",
+        updates.preferred_days || meta.preferred_days || DEFAULT_DAYS,
         meta.timezone || "Europe/Paris"
       );
 
@@ -245,7 +215,6 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({
       success: true,
       status: callStatus,
-      persona: updates.persona || meta.persona,
       userStatus: updates.status || meta.status,
       nextCallScheduled: updates.next_call_scheduled || null,
     });

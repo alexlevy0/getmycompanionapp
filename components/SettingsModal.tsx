@@ -11,17 +11,15 @@ import {
   Alert,
 } from "react-native";
 import { useState, useEffect } from "react";
-import { PERSONAS } from "@/constants/personas";
-import type { Persona } from "@/types";
+import { getAuthToken } from "@/lib/storage";
 
 interface SettingsModalProps {
   visible: boolean;
   onClose: () => void;
   currentSettings: {
     preferredTime: string;
-    persona?: string;
   };
-  onUpdate: (result: { preferredTime: string; persona: string }) => Promise<void>;
+  onUpdate: (result: { preferredTime: string }) => Promise<void>;
 }
 
 export function SettingsModal({
@@ -31,15 +29,12 @@ export function SettingsModal({
   onUpdate,
 }: SettingsModalProps) {
   const [preferredTime, setPreferredTime] = useState(currentSettings.preferredTime);
-  const [selectedPersona, setSelectedPersona] = useState<string>(
-    currentSettings.persona || "friend"
-  );
   const [loading, setLoading] = useState(false);
+  const [callingLoading, setCallingLoading] = useState(false);
 
   useEffect(() => {
     if (visible) {
       setPreferredTime(currentSettings.preferredTime);
-      setSelectedPersona(currentSettings.persona || "friend");
     }
   }, [visible, currentSettings]);
 
@@ -55,15 +50,45 @@ export function SettingsModal({
 
     setLoading(true);
     try {
-      await onUpdate({
-        preferredTime,
-        persona: selectedPersona,
-      });
+      await onUpdate({ preferredTime });
       onClose();
     } catch (error) {
       Alert.alert("Erreur", "Impossible de mettre à jour les réglages.");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleRequestCall = async () => {
+    setCallingLoading(true);
+    try {
+      const token = await getAuthToken();
+      if (!token) {
+        Alert.alert("Erreur", "Vous devez être connecté.");
+        return;
+      }
+
+      const response = await fetch("/api/request-call", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        Alert.alert("Erreur", data.error || "Impossible de déclencher l'appel.");
+        return;
+      }
+
+      Alert.alert("📞 Appel en cours", "Vous allez recevoir un appel dans quelques instants.");
+      onClose();
+    } catch (error) {
+      Alert.alert("Erreur", "Une erreur est survenue lors de la demande d'appel.");
+    } finally {
+      setCallingLoading(false);
     }
   };
 
@@ -81,10 +106,28 @@ export function SettingsModal({
         <View style={styles.modalContent}>
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>Réglages</Text>
-            <Pressable onPress={onClose} disabled={loading}>
+            <Pressable onPress={onClose} disabled={loading || callingLoading}>
               <Text style={styles.closeButton}>Fermer</Text>
             </Pressable>
           </View>
+
+          {/* Call Me Now Button */}
+          <Pressable
+            style={[styles.callButton, callingLoading && styles.callButtonDisabled]}
+            onPress={handleRequestCall}
+            disabled={callingLoading || loading}
+          >
+            {callingLoading ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <>
+                <Text style={styles.callButtonEmoji}>📞</Text>
+                <Text style={styles.callButtonText}>M'appeler maintenant</Text>
+              </>
+            )}
+          </Pressable>
+
+          <View style={styles.divider} />
 
           <Text style={styles.sectionTitle}>Heure d'appel par défaut</Text>
           <TextInput
@@ -97,40 +140,10 @@ export function SettingsModal({
           />
           <Text style={styles.helperText}>Format : HH:mm (ex: 18:30)</Text>
 
-          <Text style={[styles.sectionTitle, { marginTop: 24 }]}>
-            Votre Compagnon
-          </Text>
-          <View style={styles.personasGrid}>
-            {Object.entries(PERSONAS).map(([key, config]) => {
-              const isSelected = key === selectedPersona;
-              return (
-                <Pressable
-                  key={key}
-                  style={[
-                    styles.personaCard,
-                    isSelected && styles.personaCardSelected,
-                  ]}
-                  onPress={() => setSelectedPersona(key)}
-                  disabled={loading}
-                >
-                  <Text style={styles.personaEmoji}>{config.emoji}</Text>
-                  <Text
-                    style={[
-                      styles.personaName,
-                      isSelected && styles.personaNameSelected,
-                    ]}
-                  >
-                    {config.name}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
-
           <Pressable
             style={[styles.saveButton, loading && styles.saveButtonDisabled]}
             onPress={handleSave}
-            disabled={loading}
+            disabled={loading || callingLoading}
           >
             {loading ? (
               <ActivityIndicator color="#fff" />
@@ -162,7 +175,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 32,
+    marginBottom: 24,
   },
   modalTitle: {
     fontSize: 24,
@@ -173,6 +186,33 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: "#6b7280",
     fontWeight: "500",
+  },
+  callButton: {
+    width: "100%",
+    height: 64,
+    backgroundColor: "#22c55e",
+    borderRadius: 16,
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 24,
+    gap: 12,
+  },
+  callButtonDisabled: {
+    backgroundColor: "#86efac",
+  },
+  callButtonEmoji: {
+    fontSize: 24,
+  },
+  callButtonText: {
+    color: "#fff",
+    fontSize: 18,
+    fontWeight: "700",
+  },
+  divider: {
+    height: 1,
+    backgroundColor: "#e5e7eb",
+    marginBottom: 24,
   },
   sectionTitle: {
     fontSize: 16,
@@ -196,38 +236,7 @@ const styles = StyleSheet.create({
     color: "#9ca3af",
     textAlign: "center",
     marginTop: 8,
-  },
-  personasGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 12,
-    marginBottom: 32,
-  },
-  personaCard: {
-    width: "48%", // Allow 2 per row with gap
-    backgroundColor: "#f3f4f6",
-    borderRadius: 12,
-    padding: 16,
-    alignItems: "center",
-    borderWidth: 2,
-    borderColor: "transparent",
-  },
-  personaCardSelected: {
-    borderColor: "#2563eb",
-    backgroundColor: "#eff6ff",
-  },
-  personaEmoji: {
-    fontSize: 32,
-    marginBottom: 8,
-  },
-  personaName: {
-    fontSize: 14,
-    fontWeight: "500",
-    color: "#4b5563",
-  },
-  personaNameSelected: {
-    color: "#2563eb",
-    fontWeight: "700",
+    marginBottom: 24,
   },
   saveButton: {
     width: "100%",
