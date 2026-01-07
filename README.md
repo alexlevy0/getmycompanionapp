@@ -1,50 +1,117 @@
-# Stripe Example
+# MyCompanion (V2)
 
-https://github.com/user-attachments/assets/1a008495-8bde-4327-8e4d-1923d5bd2ccb
+Application compagnon IA "Voice-First" qui vous appelle quotidiennement pour prendre des nouvelles, vous motiver ou vous coacher.
 
-<p>
-  <!-- iOS -->
-  <a href="https://itunes.apple.com/app/apple-store/id982107779">
-    <img alt="Supports Expo iOS" longdesc="Supports Expo iOS" src="https://img.shields.io/badge/iOS-4630EB.svg?style=flat-square&logo=APPLE&labelColor=999999&logoColor=fff" />
-  </a>
-  <!-- Android -->
-  <a href="https://play.google.com/store/apps/details?id=host.exp.exponent&referrer=blankexample">
-    <img alt="Supports Expo Android" longdesc="Supports Expo Android" src="https://img.shields.io/badge/Android-4630EB.svg?style=flat-square&logo=ANDROID&labelColor=A4C639&logoColor=fff" />
-  </a>
-  <!-- Web -->
-  <a href="https://docs.expo.dev/workflow/web/">
-    <img alt="Supports Expo Web" longdesc="Supports Expo Web" src="https://img.shields.io/badge/web-4630EB.svg?style=flat-square&logo=GOOGLE-CHROME&labelColor=4285F4&logoColor=fff" />
-  </a>
-</p>
+## Stack Technique
 
-This example shows how to use Stripe in your app and website.
+- **Frontend/Mobile**: Expo (React Native), Expo Router
+- **Backend**: API Routes (Expo/Node.js)
+- **Base de données**: Aucune ! (Utilise Stripe Metadata comme Source of Truth)
+- **IA Vocale**: Dipler
+- **Paiements**: Stripe
+- **Scheduling**: Upstash QStash
+- **Rate Limiting**: Upstash Redis
+- **SMS**: Twilio
 
-## Launch your own
+## Pré-requis
 
-[![Launch with Expo](https://github.com/expo/examples/blob/master/.gh-assets/launch.svg?raw=true)](https://launch.expo.dev/?github=https://github.com/expo/examples/tree/master/with-stripe)
+- Node.js 18+
+- Compte Stripe
+- Compte Dipler
+- Compte Upstash (Redis & QStash)
+- Compte Twilio
+- Expo CLI (`npm install -g eas-cli`)
 
-## 🚀 How to use
+## Installation
 
+```bash
+npm install
 ```
-npx create-expo -e with-stripe
+
+## Configuration
+
+Copiez `.env.example` vers `.env` et remplissez les variables :
+
+```bash
+cp .env.example .env
 ```
 
-- Set the app.json `merchantIdentifier` to a value starting with `merchant.`, then run `eas build -p ios` to register the merchant identifier with Apple.
-- Set the `.env` values with your Stripe keys.
-- Follow the setup steps in the [Stripe docs](https://docs.stripe.com/payments/accept-a-payment?platform=react-native&ui=payment-sheet#react-native-customization) to ensure you have Apple configured correctly.
-- Start the app with: `npx expo`
+### Variables Requises
 
-## Deploy
+```env
+# App
+API_BASE_URL=https://votre-app.com
 
-Deploy on all platforms with Expo Application Services (EAS).
+# Stripe
+STRIPE_SECRET_KEY=sk_test_...
+STRIPE_WEBHOOK_SECRET=whsec_...
+STRIPE_PAYMENT_LINK_STANDARD=https://buy.stripe.com/...
 
-- Deploy the API Routes and website: `npx eas-cli deploy` — [Learn more](https://docs.expo.dev/eas/hosting/get-started/)
-- Deploy on iOS and Android using: `npx eas-cli build` — [Learn more](https://expo.dev/eas)
+# Dipler
+DIPLER_API_KEY=...
+DIPLER_AGENT_RECEPTIONIST=...
 
-This project has `EXPO_UNSTABLE_DEPLOY_SERVER=1` enabled in the `.env` file. This will publish the server during the build process and set the preview URL as the origin for the app. This will ensure the app always uses a version of the server that is in sync with the app.
+# QStash
+QSTASH_TOKEN=...
+QSTASH_CURRENT_SIGNING_KEY=...
+QSTASH_NEXT_SIGNING_KEY=...
 
-Alternatively, you can set the `origin` in the `app.json` and manually publish the server to have a more evergreen system where the native app always calls into the latest stable server deployment.
+# Twilio
+TWILIO_ACCOUNT_SID=...
+TWILIO_AUTH_TOKEN=...
+TWILIO_PHONE_NUMBER=...
 
-## 📝 Notes
+# Ratelimit (Upstash Redis)
+UPSTASH_REDIS_REST_URL=...
+UPSTASH_REDIS_REST_TOKEN=...
+```
 
-- Learn more about [React Native Stripe](https://docs.stripe.com/payments/accept-a-payment?platform=react-native&ui=payment-sheet#react-native-customization).
+## Développement Local
+
+```bash
+npx expo start
+```
+
+### Webhooks en Local
+
+Pour tester les webhooks (Stripe/Dipler) en local, utilisez `ngrok` ou `localtunnel` pour exposer votre port local, et mettez à jour les URLs dans les dashboards respectifs.
+
+## Déploiement (Production)
+
+L'application est configurée pour être déployée via **EAS (Expo Application Services)**.
+
+### 1. Configurer les secrets EAS
+
+```bash
+eas secret:push --scope project --env-file .env
+```
+
+### 2. Lancer le build
+
+```bash
+eas build --profile production --platform all
+```
+
+### 3. Déployer les mises à jour (OTA)
+
+```bash
+eas update --branch production
+```
+
+## Webhooks
+
+### Stripe
+Configurez un endpoint webhook pointant vers : `https://votre-domaine.com/api/webhook/stripe`
+Écoutez les événements :
+- `checkout.session.completed`
+- `customer.subscription.deleted`
+- `invoice.payment_failed`
+
+### Dipler
+Dans les paramètres de vos agents Dipler, configurez l'URL de webhook :
+`https://votre-domaine.com/api/webhook/dipler`
+
+## Sécurité
+
+- **Rate Limiting**: Activé sur `/api/start-trial` (3/h) et `/api/user-status` (60/m).
+- **Authentification**: Token basé (stocké dans Stripe Metadata, échangé via Bearer Token).

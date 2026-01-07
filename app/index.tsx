@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import {
   View,
   Text,
@@ -9,8 +9,11 @@ import {
   Platform,
   ActivityIndicator,
   ScrollView,
+  RefreshControl,
+  Alert,
 } from "react-native";
 import { saveAuthToken, getAuthToken, clearAuthToken } from "@/lib/storage";
+import { SettingsModal } from "@/components/SettingsModal";
 
 // ============================================
 // Types
@@ -52,6 +55,7 @@ export default function HomeScreen() {
   const [appState, setAppState] = useState<AppState>("loading");
   const [phone, setPhone] = useState("");
   const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [userStatus, setUserStatus] = useState<UserStatus | null>(null);
   
@@ -140,12 +144,14 @@ export default function HomeScreen() {
     setAppState("login");
   };
 
-  const handleRefresh = async () => {
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
     const token = await getAuthToken();
     if (token) {
       await fetchUserStatus(token);
     }
-  };
+    setRefreshing(false);
+  }, []);
 
   const handleUpdatePreferences = async (updates: { preferredTime: string; persona: string }) => {
     try {
@@ -243,7 +249,12 @@ export default function HomeScreen() {
 
   return (
     <View style={{ flex: 1 }}>
-      <ScrollView contentContainerStyle={styles.dashboardContainer}>
+      <ScrollView
+        contentContainerStyle={styles.dashboardContainer}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />
+        }
+      >
         {/* Header */}
         <View style={styles.header}>
           <Text style={styles.greeting}>
@@ -334,10 +345,6 @@ export default function HomeScreen() {
           </View>
         )}
 
-        {/* Refresh Button */}
-        <Pressable style={styles.refreshButton} onPress={handleRefresh}>
-          <Text style={styles.refreshText}>🔄 Actualiser</Text>
-        </Pressable>
       </ScrollView>
 
       {/* Settings Modal */}
