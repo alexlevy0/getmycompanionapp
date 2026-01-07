@@ -4,6 +4,7 @@ import { validatePhone, formatPhoneE164 } from "@/lib/utils";
 import { createScopedLogger } from "@/lib/logger";
 import { config } from "@/lib/config";
 import { ERROR_MESSAGES, SUCCESS_MESSAGES } from "@/constants/messages";
+import { checkRateLimit } from "@/lib/ratelimit";
 
 const log = createScopedLogger("start-trial");
 
@@ -14,11 +15,53 @@ function generateAuthToken(): string {
   return crypto.randomUUID();
 }
 
+/**
+ * Extracts IP from request headers.
+ * Cloudflare/Vercel/Expo usually put client IP in x-forwarded-for.
+ */
+function getClientIp(request: Request): string {
+  const forwarded = request.headers.get("x-forwarded-for");
+  const realIp = request.headers.get("x-real-ip");
+  
+  if (forwarded) {
+    return forwarded.split(",")[0].trim();
+  }
+  
+  if (realIp) {
+    return realIp.trim();
+  }
+  
+  return "127.0.0.1";
+}
+
 export async function POST(request: Request): Promise<Response> {
   try {
+    // ========================================
+    // 1. Rate Limiting
+    // ========================================
+    const ip = getClientIp(request);
+    const { success, limit, remaining, reset } = await checkRateLimit("startTrial", ip);
+    
+    if (!success) {
+      log.warn("Rate limit exceeded for start-trial", { ip });
+      return Response.json(
+        { error: "Too many requests. Please try again later." },
+        { 
+          status: 429,
+          headers: {
+            "X-RateLimit-Limit": limit.toString(),
+            "X-RateLimit-Remaining": remaining.toString(),
+            "X-RateLimit-Reset": reset.toString(),
+          }
+        }
+      );
+    }
+
     const { phone } = await request.json();
 
-    // Validation
+    // ========================================
+    // 2. Validation
+    // ========================================
     if (!phone || !validatePhone(phone)) {
       return Response.json(
         { error: ERROR_MESSAGES.invalidPhone },
@@ -28,7 +71,9 @@ export async function POST(request: Request): Promise<Response> {
 
     const formattedPhone = formatPhoneE164(phone);
 
-    // Check existing customer
+    // ========================================
+    // 3. Check existing customer
+    // ========================================
     const existing = await findCustomerByPhone(formattedPhone);
     if (existing) {
       const meta = existing.metadata;
@@ -44,10 +89,11 @@ export async function POST(request: Request): Promise<Response> {
       }
     }
 
-    // Generate unique auth token for this user
+    // ========================================
+    // 4. Create new customer
+    // ========================================
     const authToken = generateAuthToken();
 
-    // Create customer with "onboarding" status
     const metadata: Record<string, string> = {
       phone: formattedPhone,
       status: "onboarding",
@@ -57,7 +103,6 @@ export async function POST(request: Request): Promise<Response> {
       timezone: config.defaults.timezone,
       preferred_time: config.defaults.preferredTime,
       preferred_days: config.defaults.preferredDays,
-      // Secure auth token for API authentication
       auth_token: authToken,
     };
 
@@ -65,10 +110,13 @@ export async function POST(request: Request): Promise<Response> {
 
     log.info("Customer created", { 
       customerId: customer.id, 
-      phone: formattedPhone 
+      phone: formattedPhone,
+      ip 
     });
 
-    // Trigger first call with Receptionist agent
+    // ========================================
+    // 5. Trigger first call
+    // ========================================
     await triggerDiplerCall({
       phone: formattedPhone,
       isFirstCall: true,
@@ -79,7 +127,6 @@ export async function POST(request: Request): Promise<Response> {
 
     log.info("First call triggered", { customerId: customer.id });
 
-    // Return token to the client (store securely!)
     return Response.json({
       success: true,
       message: SUCCESS_MESSAGES.callTriggered,
