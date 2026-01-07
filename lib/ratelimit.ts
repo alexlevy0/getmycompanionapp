@@ -1,27 +1,8 @@
 import { Ratelimit } from "@upstash/ratelimit";
-import { Redis } from "@upstash/redis";
+import { redis } from "./redis";
 import { createScopedLogger } from "./logger";
 
 const log = createScopedLogger("ratelimit");
-
-// ============================================
-// Redis Client
-// ============================================
-
-// Check if Redis is configured
-const isRedisConfigured =
-  process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN;
-
-if (!isRedisConfigured) {
-  log.warn("Upstash Redis not configured - Rate limiting disabled");
-}
-
-const redis = isRedisConfigured
-  ? new Redis({
-      url: process.env.UPSTASH_REDIS_REST_URL!,
-      token: process.env.UPSTASH_REDIS_REST_TOKEN!,
-    })
-  : null; // Fallback or mock if needed, but here we'll just bypass
 
 // ============================================
 // Limiters Config

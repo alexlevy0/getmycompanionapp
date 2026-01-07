@@ -63,6 +63,11 @@ export default function HomeScreen() {
   const [error, setError] = useState("");
   const [userStatus, setUserStatus] = useState<UserStatus | null>(null);
   
+  // Login / OTP State
+  const [authMode, setAuthMode] = useState<"signup" | "signin">("signup");
+  const [otpCode, setOtpCode] = useState("");
+  const [showOtpInput, setShowOtpInput] = useState(false);
+  
   // Settings Modal State
   const [isSettingsModalVisible, setIsSettingsModalVisible] = useState(false);
 
@@ -142,10 +147,67 @@ export default function HomeScreen() {
     }
   };
 
+  const handleRequestOtp = async () => {
+    setError("");
+    setLoading(true);
+
+    try {
+      const response = await fetch("/api/auth/request-code", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Erreur de connexion");
+      }
+
+      setShowOtpInput(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Une erreur est survenue");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleVerifyOtp = async () => {
+    setError("");
+    setLoading(true);
+
+    try {
+      const response = await fetch("/api/auth/verify-code", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone, code: otpCode }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Code invalide");
+      }
+
+      if (data.token) {
+        await saveAuthToken(data.token);
+        await fetchUserStatus(data.token);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Une erreur est survenue");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleLogout = async () => {
     await clearAuthToken();
     setUserStatus(null);
     setAppState("login");
+    setAuthMode("signup");
+    setShowOtpInput(false);
+    setPhone("");
+    setOtpCode("");
   };
 
   const handleRefresh = useCallback(async () => {
@@ -198,8 +260,12 @@ export default function HomeScreen() {
   // ========================================
   // Login State
   // ========================================
+  // ========================================
+  // Login State
+  // ========================================
   if (appState === "login") {
-    const isValid = phone.replace(/\s/g, "").length >= 10;
+    const isValidPhone = phone.replace(/\s/g, "").length >= 10;
+    const isValidOtp = otpCode.length === 6;
 
     return (
       <KeyboardAvoidingView
@@ -209,36 +275,91 @@ export default function HomeScreen() {
         <Text style={styles.emoji}>📞</Text>
         <Text style={styles.title}>MyCompanion</Text>
         <Text style={styles.subtitle}>
-          L'IA qui t'appelle.{"\n"}Chaque jour, à l'heure qui te convient.
+          {authMode === "signup" 
+            ? "L'IA qui t'appelle.\nChaque jour, à l'heure qui te convient."
+            : "Bon retour !\nConnectez-vous pour retrouver votre compte."}
         </Text>
 
-        <TextInput
-          style={styles.input}
-          placeholder="Ton numéro de téléphone"
-          placeholderTextColor="#999"
-          keyboardType="phone-pad"
-          value={phone}
-          onChangeText={setPhone}
-          autoFocus
-        />
+        {!showOtpInput ? (
+          <>
+            <TextInput
+              style={styles.input}
+              placeholder="Ton numéro de téléphone"
+              placeholderTextColor="#999"
+              keyboardType="phone-pad"
+              value={phone}
+              onChangeText={setPhone}
+              autoFocus
+            />
+
+            <Pressable
+              style={[styles.button, (!isValidPhone || loading) && styles.buttonDisabled]}
+              onPress={authMode === "signup" ? handleStartTrial : handleRequestOtp}
+              disabled={!isValidPhone || loading}
+            >
+              {loading ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.buttonText}>
+                  {authMode === "signup" ? "M'appeler" : "Recevoir mon code"}
+                </Text>
+              )}
+            </Pressable>
+
+            <Pressable 
+              style={styles.switchModeButton}
+              onPress={() => {
+                 setAuthMode(authMode === "signup" ? "signin" : "signup");
+                 setError("");
+              }}
+            >
+              <Text style={styles.switchModeText}>
+                {authMode === "signup" 
+                  ? "Déjà un compte ? Se connecter" 
+                  : "Nouveau ? S'inscrire"}
+              </Text>
+            </Pressable>
+          </>
+        ) : (
+          <>
+            <TextInput
+              style={styles.input}
+              placeholder="Code reçu par SMS (6 chiffres)"
+              placeholderTextColor="#999"
+              keyboardType="number-pad"
+              value={otpCode}
+              onChangeText={setOtpCode}
+              maxLength={6}
+              autoFocus
+            />
+
+            <Pressable
+              style={[styles.button, (!isValidOtp || loading) && styles.buttonDisabled]}
+              onPress={handleVerifyOtp}
+              disabled={!isValidOtp || loading}
+            >
+              {loading ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.buttonText}>Valider le code</Text>
+              )}
+            </Pressable>
+            
+            <Pressable 
+              style={styles.switchModeButton}
+              onPress={() => setShowOtpInput(false)}
+            >
+              <Text style={styles.switchModeText}>Modifier mon numéro</Text>
+            </Pressable>
+          </>
+        )}
 
         {error ? <Text style={styles.error}>{error}</Text> : null}
 
-        <Pressable
-          style={[styles.button, (!isValid || loading) && styles.buttonDisabled]}
-          onPress={handleStartTrial}
-          disabled={!isValid || loading}
-        >
-          {loading ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={styles.buttonText}>M'appeler</Text>
-          )}
-        </Pressable>
-
         <Text style={styles.legal}>
-          3 appels gratuits, sans engagement.{"\n"}
-          En continuant, vous acceptez nos CGU.
+          {authMode === "signup" 
+            ? "3 appels gratuits, sans engagement.\nEn continuant, vous acceptez nos CGU."
+            : "Nous vous enverrons un code temporaire par SMS."}
         </Text>
       </KeyboardAvoidingView>
     );
@@ -390,6 +511,15 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: "#999",
     textAlign: "center",
+  },
+  switchModeButton: {
+    marginTop: 16,
+    padding: 8,
+  },
+  switchModeText: {
+    color: "#2563eb",
+    fontSize: 14,
+    fontWeight: "600",
   },
 
   // Dashboard styles
