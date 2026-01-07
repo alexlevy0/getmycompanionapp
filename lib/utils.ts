@@ -1,5 +1,17 @@
 import { addDays, setHours, setMinutes, setSeconds, setMilliseconds, getDay, isBefore } from "date-fns";
 import { toZonedTime, fromZonedTime } from "date-fns-tz";
+import { log } from "./logger";
+
+// ============================================
+// Time Validation
+// ============================================
+
+/**
+ * Validates HH:mm time format.
+ */
+export function isValidTimeFormat(time: string): boolean {
+  return /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/.test(time);
+}
 
 // ============================================
 // Phone Validation & Formatting
@@ -10,6 +22,7 @@ import { toZonedTime, fromZonedTime } from "date-fns-tz";
  * Accepts formats: 0612345678, +33612345678, 06 12 34 56 78
  */
 export function validatePhone(phone: string): boolean {
+  if (!phone) return false;
   const cleaned = phone.replace(/\s/g, "");
   const regex = /^(?:(?:\+33|0033|0)[67]\d{8})$/;
   return regex.test(cleaned);
@@ -19,6 +32,7 @@ export function validatePhone(phone: string): boolean {
  * Formats a phone number to E.164 format (+33...).
  */
 export function formatPhoneE164(phone: string): string {
+  if (!phone) return "";
   const cleaned = phone.replace(/\s/g, "");
 
   if (cleaned.startsWith("+33")) return cleaned;
@@ -68,11 +82,7 @@ interface CalculateNextCallTimeParams {
  * 
  * @example
  * // User in Paris wants calls at 09:00 on weekdays
- * calculateNextCallTime({
- *   preferredTime: "09:00",
- *   preferredDays: "weekdays",
- *   timezone: "Europe/Paris"
- * })
+ * calculateNextCallTime("09:00", "weekdays", "Europe/Paris")
  * // Returns: Date object in UTC (e.g., Monday 08:00 UTC = 09:00 Paris)
  */
 export function calculateNextCallTime(
@@ -82,12 +92,12 @@ export function calculateNextCallTime(
   fromDate?: Date
 ): Date {
   // 1. Parse preferred time
-  const [hours, minutes] = preferredTime.split(":").map(Number);
-  
-  if (isNaN(hours) || isNaN(minutes)) {
-    console.warn(`Invalid preferredTime: ${preferredTime}, defaulting to 10:00`);
+  if (!isValidTimeFormat(preferredTime)) {
+    log.error(`Invalid preferredTime: ${preferredTime}, defaulting to 10:00`);
     return calculateNextCallTime("10:00", preferredDays, timezone, fromDate);
   }
+
+  const [hours, minutes] = preferredTime.split(":").map(Number);
 
   // 2. Get current time in user's timezone
   const nowUtc = fromDate || new Date();
@@ -159,7 +169,7 @@ export function parsePreferredDays(preferredDays: PreferredDays): number[] {
 
   // Fallback to daily if invalid
   if (parsed.length === 0) {
-    console.warn(`Invalid preferredDays: ${preferredDays}, defaulting to daily`);
+    log.error(`Invalid preferredDays: ${preferredDays}, defaulting to daily`);
     return [0, 1, 2, 3, 4, 5, 6];
   }
 

@@ -54,6 +54,9 @@ export default function HomeScreen() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [userStatus, setUserStatus] = useState<UserStatus | null>(null);
+  
+  // Settings Modal State
+  const [isSettingsModalVisible, setIsSettingsModalVisible] = useState(false);
 
   // Check for existing token on mount
   useEffect(() => {
@@ -144,6 +147,32 @@ export default function HomeScreen() {
     }
   };
 
+  const handleUpdatePreferences = async (updates: { preferredTime: string; persona: string }) => {
+    try {
+      const token = await getAuthToken();
+      if (!token) return;
+
+      const response = await fetch("/api/update-preferences", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(updates),
+      });
+
+      if (!response.ok) {
+        throw new Error("Erreur mise à jour");
+      }
+
+      // Refresh status to show new data
+      await fetchUserStatus(token);
+      
+    } catch (error) {
+      Alert.alert("Erreur", "Impossible de mettre à jour les réglages.");
+    }
+  };
+
   // ========================================
   // Loading State
   // ========================================
@@ -213,16 +242,25 @@ export default function HomeScreen() {
   const statusConfig = STATUS_CONFIG[userStatus.status] || STATUS_CONFIG.trial;
 
   return (
-    <ScrollView contentContainerStyle={styles.dashboardContainer}>
-      {/* Header */}
-      <View style={styles.header}>
-        <Text style={styles.greeting}>
-          Bonjour{userStatus.firstName ? `, ${userStatus.firstName}` : ""} 👋
-        </Text>
-        <Pressable onPress={handleLogout} style={styles.logoutButton}>
-          <Text style={styles.logoutText}>Déconnexion</Text>
-        </Pressable>
-      </View>
+    <View style={{ flex: 1 }}>
+      <ScrollView contentContainerStyle={styles.dashboardContainer}>
+        {/* Header */}
+        <View style={styles.header}>
+          <Text style={styles.greeting}>
+            Bonjour{userStatus.firstName ? `, ${userStatus.firstName}` : ""} 👋
+          </Text>
+          <View style={styles.headerActions}>
+            <Pressable 
+              onPress={() => setIsSettingsModalVisible(true)} 
+              style={styles.settingsButton}
+            >
+              <Text style={styles.settingsButtonText}>⚙️ Réglages</Text>
+            </Pressable>
+            <Pressable onPress={handleLogout} style={styles.logoutButton}>
+              <Text style={styles.logoutText}>Déconnexion</Text>
+            </Pressable>
+          </View>
+        </View>
 
       {/* Status Card */}
       <View style={[styles.card, { borderLeftColor: statusConfig.color }]}>
@@ -249,19 +287,21 @@ export default function HomeScreen() {
         )}
       </View>
 
-      {/* Next Call Card */}
-      {userStatus.nextCallScheduled && (
-        <View style={styles.card}>
-          <Text style={styles.cardLabel}>Prochain appel</Text>
-          <Text style={styles.cardValue}>
-            {new Date(userStatus.nextCallScheduled).toLocaleString("fr-FR", {
-              weekday: "long",
-              hour: "2-digit",
-              minute: "2-digit",
-            })}
-          </Text>
-        </View>
-      )}
+        {/* Next Call Card */}
+        {userStatus.nextCallScheduled && (
+          <View style={styles.card}>
+            <Text style={styles.cardLabel}>Prochain appel</Text>
+            <Text style={styles.cardValue}>
+              {new Date(userStatus.nextCallScheduled).toLocaleString("fr-FR", {
+                weekday: "long",
+                day: "numeric",
+                month: "long",
+                hour: "2-digit",
+                minute: "2-digit",
+              })}
+            </Text>
+          </View>
+        )}
 
       {/* Stats */}
       <View style={styles.statsRow}>
@@ -275,24 +315,42 @@ export default function HomeScreen() {
         </View>
       </View>
 
-      {/* Persona */}
-      {userStatus.persona && (
-        <View style={styles.card}>
-          <Text style={styles.cardLabel}>Votre compagnon</Text>
-          <Text style={styles.cardValue}>
-            {userStatus.persona === "coach" && "💪 Coach"}
-            {userStatus.persona === "mentor" && "🎓 Mentor"}
-            {userStatus.persona === "companion" && "🧓 Compagnon"}
-            {userStatus.persona === "friend" && "🫂 Ami"}
-          </Text>
-        </View>
-      )}
+        {/* Persona */}
+        {userStatus.persona && (
+          <View style={styles.card}>
+            <Text style={styles.cardLabel}>Votre compagnon</Text>
+            <Text style={styles.cardValue}>
+              {userStatus.persona === "coach" && "💪 Coach"}
+              {userStatus.persona === "mentor" && "🎓 Mentor"}
+              {userStatus.persona === "companion" && "🧓 Compagnon"}
+              {userStatus.persona === "friend" && "🫂 Ami"}
+            </Text>
+            <Pressable 
+              onPress={() => setIsSettingsModalVisible(true)}
+              style={styles.cardActionLink}
+            >
+              <Text style={styles.cardActionLinkText}>Modifier</Text>
+            </Pressable>
+          </View>
+        )}
 
-      {/* Refresh Button */}
-      <Pressable style={styles.refreshButton} onPress={handleRefresh}>
-        <Text style={styles.refreshText}>🔄 Actualiser</Text>
-      </Pressable>
-    </ScrollView>
+        {/* Refresh Button */}
+        <Pressable style={styles.refreshButton} onPress={handleRefresh}>
+          <Text style={styles.refreshText}>🔄 Actualiser</Text>
+        </Pressable>
+      </ScrollView>
+
+      {/* Settings Modal */}
+      <SettingsModal
+        visible={isSettingsModalVisible}
+        onClose={() => setIsSettingsModalVisible(false)}
+        currentSettings={{
+          preferredTime: userStatus.preferredTime,
+          persona: userStatus.persona,
+        }}
+        onUpdate={handleUpdatePreferences}
+      />
+    </View>
   );
 }
 
@@ -378,15 +436,32 @@ const styles = StyleSheet.create({
     backgroundColor: "#f5f5f5",
   },
   header: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
     marginBottom: 24,
   },
+  headerActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: 8,
+  },
   greeting: {
-    fontSize: 24,
+    fontSize: 28,
     fontWeight: "700",
     color: "#1a1a1a",
+    marginBottom: 8,
+  },
+  settingsButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    backgroundColor: "#fff",
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+  },
+  settingsButtonText: {
+    color: "#374151",
+    fontWeight: "600",
+    fontSize: 14,
   },
   logoutButton: {
     padding: 8,
@@ -428,6 +503,15 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: "600",
     color: "#1a1a1a",
+  },
+  cardActionLink: {
+    marginTop: 8,
+    alignSelf: "flex-start",
+  },
+  cardActionLinkText: {
+    color: "#2563eb",
+    fontWeight: "600",
+    fontSize: 14,
   },
   statsRow: {
     flexDirection: "row",
