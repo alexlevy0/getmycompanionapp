@@ -21,6 +21,12 @@
       ]
     ],
     "name": "MyCompanion",
-    "slug": "MyCompanion"
+    "slug": "MyCompanion",
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "8a97bf37-0792-4172-80f8-1e9a8a474091"
+      }
+    }
   }
 }
