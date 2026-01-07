@@ -1,4 +1,4 @@
-import { addDays, setHours, setMinutes, setSeconds, setMilliseconds, getDay, isBefore } from "date-fns";
+import { addDays, setHours, setMinutes, setSeconds, setMilliseconds, getDay, isBefore, addHours } from "date-fns";
 import { toZonedTime, fromZonedTime } from "date-fns-tz";
 import { log } from "./logger";
 
@@ -216,4 +216,39 @@ export function formatTimeInTimezone(date: Date, timezone: string): string {
 export function getDayName(dayNumber: number): string {
   const days = ["Dimanche", "Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi"];
   return days[dayNumber] || "Inconnu";
+}
+
+// ============================================
+// Retry Logic
+// ============================================
+
+/**
+ * Calculates the next retry time smarty.
+ * - Minimum delta: +1 hour from now.
+ * - Window: 09:00 to 21:00 in user's timezone.
+ * - If retry falls after 21:00, schedule for 10:00 next day.
+ * - If retry falls before 09:00, schedule for 10:00 today.
+ */
+export function calculateRetryTime(timezone: string): Date {
+  const nowUtc = new Date();
+  let retryUtc = addHours(nowUtc, 1);
+  
+  const retryZoned = toZonedTime(retryUtc, timezone);
+  const hour = retryZoned.getHours();
+
+  // Case 1: Too late (after 21h) => Next day 10h
+  if (hour >= 21) {
+    const nextDay = addDays(retryZoned, 1);
+    const nextTen = setHours(setMinutes(setSeconds(setMilliseconds(nextDay, 0), 0), 0), 10);
+    return fromZonedTime(nextTen, timezone);
+  }
+
+  // Case 2: Too early (before 09h) => Today 10h
+  if (hour < 9) {
+    const todayTen = setHours(setMinutes(setSeconds(setMilliseconds(retryZoned, 0), 0), 0), 10);
+    return fromZonedTime(todayTen, timezone);
+  }
+
+  // Case 3: Within window => Keep computed retry time (Now + 1h)
+  return retryUtc;
 }

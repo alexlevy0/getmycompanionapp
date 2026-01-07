@@ -1,13 +1,15 @@
 import { stripe, updateCustomerMetadata } from "@/lib/stripe";
 import { scheduleNextCall } from "@/lib/qstash";
 import { sendPaymentSMS } from "@/lib/twilio";
-import { calculateNextCallTime } from "@/lib/utils";
+import { calculateNextCallTime, calculateRetryTime } from "@/lib/utils";
+import { sendNotificationSMS } from "@/lib/twilio";
 import {
   DiplerWebhookPayload,
   Persona,
   determineCallStatus,
 } from "@/types";
 import { MAX_NO_ANSWER_RETRIES, PERSONAS } from "@/constants/personas";
+import { SMS_TEMPLATES } from "@/constants/messages";
 
 // ============================================
 // Constants
@@ -92,18 +94,35 @@ export async function POST(request: Request): Promise<Response> {
       updates.consecutive_no_answer = noAnswerCount.toString();
 
       if (noAnswerCount < MAX_NO_ANSWER_RETRIES) {
-        const retryTime = new Date(Date.now() + 60 * 60 * 1000);
+        // Smart Retry Logic
+        const retryTime = calculateRetryTime(meta.timezone || "Europe/Paris");
+        
         const messageId = await scheduleNextCall({
           phone: meta.phone,
           customerId,
           scheduledFor: retryTime,
         });
+        
         updates.qstash_message_id = messageId;
         updates.next_call_scheduled = retryTime.toISOString();
-        console.log(`Scheduling retry ${noAnswerCount}/${MAX_NO_ANSWER_RETRIES} for ${meta.phone}`);
+        console.log(`Scheduling retry ${noAnswerCount}/${MAX_NO_ANSWER_RETRIES} for ${meta.phone} at ${retryTime.toISOString()}`);
       } else {
+        // Alerting & Pausing
         updates.status = "paused";
-        console.log(`Max retries reached for ${meta.phone}, pausing`);
+        console.log(`Max retries reached for ${meta.phone}, pausing and sending alert`);
+
+        // Send alert SMS
+        try {
+          await sendNotificationSMS({
+            phone: meta.phone,
+            message: SMS_TEMPLATES.missedCallsReminder({
+              firstName: meta.first_name,
+              missedCount: noAnswerCount,
+            }),
+          });
+        } catch (smsError) {
+          console.error("Failed to send missed calls alert SMS", smsError);
+        }
       }
 
       await updateCustomerMetadata(customerId, { ...meta, ...updates });
