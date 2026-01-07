@@ -1,0 +1,26 @@
+{
+  "expo": {
+    "scheme": "myapp",
+    "ios": {
+      "infoPlist": {
+        "NSCameraUsageDescription": "Use the camera to scan cards."
+      }
+    },
+    "web": {
+      "output": "server"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-font",
+      [
+        "@stripe/stripe-react-native",
+        {
+          "merchantIdentifier": "merchant.REPLACE_ME",
+          "publishableKey": "pk_test_qblFNYngBkEdjEZ16jxxoWSM"
+        }
+      ]
+    ],
+    "name": "MyCompanion",
+    "slug": "MyCompanion"
+  }
+}
