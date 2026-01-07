@@ -1,10 +1,11 @@
 import { stripe } from "@/lib/stripe";
 import { verifyQStashSignature } from "@/lib/qstash";
 import { triggerDiplerCall } from "@/lib/dipler";
+import { Persona } from "@/types";
 
 export async function POST(request: Request): Promise<Response> {
   try {
-    // Vérifier signature QStash
+    // Verify QStash signature
     const isValid = await verifyQStashSignature(request);
     if (!isValid) {
       return new Response("Unauthorized", { status: 401 });
@@ -12,7 +13,7 @@ export async function POST(request: Request): Promise<Response> {
 
     const { phone, customerId } = await request.json();
 
-    // Récupérer Customer
+    // Get customer
     const customer = await stripe.customers.retrieve(customerId);
     if (customer.deleted) {
       return new Response("Customer deleted", { status: 404 });
@@ -20,21 +21,27 @@ export async function POST(request: Request): Promise<Response> {
 
     const meta = customer.metadata;
 
-    // Vérifier éligibilité
+    // Check eligibility
     const canCall =
       meta.status === "active" ||
       (meta.status === "trial" && parseInt(meta.trial_calls_remaining) > 0);
 
     if (!canCall) {
-      console.log(`Skipping call for ${phone}: not eligible`);
       return Response.json({ skipped: true, reason: "not_eligible" });
     }
 
-    // Déclencher appel
+    // Build context from last call
+    const context = meta.last_call_summary
+      ? `Résumé du dernier appel: ${meta.last_call_summary}`
+      : undefined;
+
+    // Trigger call with persona
     await triggerDiplerCall({
       phone: meta.phone,
       customerId: customer.id,
+      persona: (meta.persona as Persona) || "friend",
       isFirstCall: false,
+      context,
     });
 
     return Response.json({ success: true });

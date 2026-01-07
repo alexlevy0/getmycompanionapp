@@ -1,6 +1,6 @@
 import Stripe from "stripe";
-import { stripe } from "@/lib/stripe";
-import { scheduleNextCall } from "@/lib/qstash";
+import { stripe, updateCustomerMetadata } from "@/lib/stripe";
+import { scheduleNextCall, cancelScheduledCall } from "@/lib/qstash";
 import { calculateNextCallTime } from "@/lib/utils";
 
 export async function POST(request: Request): Promise<Response> {
@@ -17,7 +17,6 @@ export async function POST(request: Request): Promise<Response> {
         process.env.STRIPE_WEBHOOK_SECRET!
       );
     } catch (err) {
-      console.error("Webhook signature verification failed");
       return new Response("Invalid signature", { status: 400 });
     }
 
@@ -26,27 +25,29 @@ export async function POST(request: Request): Promise<Response> {
         const session = event.data.object as Stripe.Checkout.Session;
         const customerId = session.customer as string;
 
-        // Activer le customer
         const customer = await stripe.customers.retrieve(customerId);
         if (!customer.deleted) {
-          await stripe.customers.update(customerId, {
-            metadata: {
-              ...customer.metadata,
-              status: "active",
-            },
-          });
+          const meta = customer.metadata;
 
-          // Programmer le premier appel payant
-          const nextCallTime = calculateNextCallTime(
-            customer.metadata.preferred_time || "10:00",
-            customer.metadata.preferred_days || "daily",
-            customer.metadata.timezone || "Europe/Paris"
+          // Schedule first paid call
+          const nextTime = calculateNextCallTime(
+            meta.preferred_time,
+            meta.preferred_days,
+            meta.timezone
           );
 
-          await scheduleNextCall({
-            phone: customer.metadata.phone,
+          const messageId = await scheduleNextCall({
+            phone: meta.phone,
             customerId,
-            scheduledFor: nextCallTime,
+            scheduledFor: nextTime,
+          });
+
+          // Activate subscription
+          await updateCustomerMetadata(customerId, {
+            ...meta,
+            status: "active",
+            next_call_scheduled: nextTime.toISOString(),
+            qstash_message_id: messageId,
           });
         }
         break;
@@ -56,18 +57,20 @@ export async function POST(request: Request): Promise<Response> {
         const subscription = event.data.object as Stripe.Subscription;
         const customerId = subscription.customer as string;
 
-        // Désactiver le customer
         const customer = await stripe.customers.retrieve(customerId);
         if (!customer.deleted) {
-          // TODO: Annuler le prochain appel schedulé via QStash
+          const meta = customer.metadata;
 
-          await stripe.customers.update(customerId, {
-            metadata: {
-              ...customer.metadata,
-              status: "churned",
-              next_call_scheduled: "",
-              qstash_message_id: "",
-            },
+          // Cancel scheduled call
+          if (meta.qstash_message_id) {
+            await cancelScheduledCall(meta.qstash_message_id);
+          }
+
+          await updateCustomerMetadata(customerId, {
+            ...meta,
+            status: "churned",
+            next_call_scheduled: "",
+            qstash_message_id: "",
           });
         }
         break;

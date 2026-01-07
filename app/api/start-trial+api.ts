@@ -1,10 +1,12 @@
-import { stripe } from "@/lib/stripe";
+import { findCustomerByPhone, createCustomer } from "@/lib/stripe";
 import { triggerDiplerCall } from "@/lib/dipler";
 import { validatePhone, formatPhoneE164 } from "@/lib/utils";
+import { PERSONAS, TRIAL_CALLS } from "@/constants/personas";
+import { Persona } from "@/types";
 
 export async function POST(request: Request): Promise<Response> {
   try {
-    const { phone } = await request.json();
+    const { phone, persona } = await request.json();
 
     // Validation
     if (!phone || !validatePhone(phone)) {
@@ -14,56 +16,54 @@ export async function POST(request: Request): Promise<Response> {
       );
     }
 
+    if (!persona || !PERSONAS[persona as Persona]) {
+      return Response.json({ error: "Persona invalide" }, { status: 400 });
+    }
+
     const formattedPhone = formatPhoneE164(phone);
+    const personaConfig = PERSONAS[persona as Persona];
 
-    // Check si Customer existe déjà
-    const existingCustomers = await stripe.customers.search({
-      query: `metadata['phone']:'${formattedPhone}'`,
-    });
-
-    if (existingCustomers.data.length > 0) {
-      const existing = existingCustomers.data[0];
+    // Check existing customer
+    const existing = await findCustomerByPhone(formattedPhone);
+    if (existing) {
       const meta = existing.metadata;
-
-      // Si déjà actif ou en trial avec appels restants
       if (
         meta.status === "active" ||
-        (meta.status === "trial" && parseInt(meta.trial_calls_remaining) > 0)
+        parseInt(meta.trial_calls_remaining) > 0
       ) {
         return Response.json(
-          {
-            error: "Ce numéro est déjà enregistré",
-            status: meta.status,
-          },
+          { error: "Ce numéro est déjà enregistré" },
           { status: 409 }
         );
       }
     }
 
-    // Créer Customer Stripe
-    const customer = await stripe.customers.create({
-      metadata: {
-        phone: formattedPhone,
-        status: "trial",
-        trial_calls_remaining: "3",
-        total_calls: "0",
-        timezone: "Europe/Paris",
-        preferred_time: "10:00",
-        preferred_days: "daily",
-      },
-    });
+    // Create customer
+    const metadata: Record<string, string> = {
+      phone: formattedPhone,
+      persona: persona,
+      status: "trial",
+      trial_calls_remaining: TRIAL_CALLS.toString(),
+      total_calls: "0",
+      consecutive_no_answer: "0",
+      timezone: "Europe/Paris",
+      preferred_time: personaConfig.defaultTime,
+      preferred_days: personaConfig.defaultDays,
+    };
 
-    // Déclencher premier appel Dipler
+    const customer = await createCustomer(metadata);
+
+    // Trigger first call
     await triggerDiplerCall({
       phone: formattedPhone,
       customerId: customer.id,
+      persona: persona as Persona,
       isFirstCall: true,
     });
 
     return Response.json({
       success: true,
       message: "Vous allez recevoir un appel dans quelques instants.",
-      customerId: customer.id,
     });
   } catch (error) {
     console.error("start-trial error:", error);

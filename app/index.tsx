@@ -5,70 +5,34 @@ import {
   TextInput,
   Pressable,
   StyleSheet,
-  ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
 } from "react-native";
+import { router } from "expo-router";
 
-export default function HomeScreen() {
+export default function PhoneScreen() {
   const [phone, setPhone] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [success, setSuccess] = useState(false);
-  const [error, setError] = useState("");
 
-  const handleSubmit = async () => {
-    setError("");
-    setLoading(true);
-
-    try {
-      const response = await fetch("/api/start-trial", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone }),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || "Une erreur est survenue");
-      }
-
-      setSuccess(true);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Une erreur est survenue");
-    } finally {
-      setLoading(false);
-    }
+  const handleContinue = () => {
+    router.push({ pathname: "/persona", params: { phone } });
   };
 
-  if (success) {
-    return (
-      <View style={styles.container}>
-        <Text style={styles.emoji}>📞</Text>
-        <Text style={styles.title}>C'est parti !</Text>
-        <Text style={styles.subtitle}>
-          Vous allez recevoir un appel dans quelques instants.
-          {"\n\n"}
-          Décrochez, c'est votre nouveau compagnon qui vous appelle !
-        </Text>
-      </View>
-    );
-  }
+  const isValid = phone.replace(/\s/g, "").length >= 10;
 
   return (
     <KeyboardAvoidingView
       style={styles.container}
       behavior={Platform.OS === "ios" ? "padding" : "height"}
     >
-      <Text style={styles.emoji}>👋</Text>
+      <Text style={styles.emoji}>📞</Text>
       <Text style={styles.title}>MyCompanion</Text>
       <Text style={styles.subtitle}>
-        Un appel amical chaque jour,{"\n"}pour égayer votre quotidien.
+        L'IA qui t'appelle.{"\n"}Chaque jour, à l'heure qui te convient.
       </Text>
 
       <TextInput
         style={styles.input}
-        placeholder="Votre numéro de téléphone"
+        placeholder="Ton numéro de téléphone"
         placeholderTextColor="#999"
         keyboardType="phone-pad"
         value={phone}
@@ -76,24 +40,13 @@ export default function HomeScreen() {
         autoFocus
       />
 
-      {error ? <Text style={styles.error}>{error}</Text> : null}
-
       <Pressable
-        style={[styles.button, (loading || phone.length < 10) && styles.buttonDisabled]}
-        onPress={handleSubmit}
-        disabled={loading || phone.length < 10}
+        style={[styles.button, !isValid && styles.buttonDisabled]}
+        onPress={handleContinue}
+        disabled={!isValid}
       >
-        {loading ? (
-          <ActivityIndicator color="#fff" />
-        ) : (
-          <Text style={styles.buttonText}>Recevoir mon premier appel</Text>
-        )}
+        <Text style={styles.buttonText}>Continuer</Text>
       </Pressable>
-
-      <Text style={styles.legal}>
-        3 appels gratuits, sans engagement.{"\n"}
-        En continuant, vous acceptez nos CGU.
-      </Text>
     </KeyboardAvoidingView>
   );
 }
@@ -150,16 +103,5 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontSize: 18,
     fontWeight: "600",
-  },
-  error: {
-    color: "#dc2626",
-    marginBottom: 16,
-    textAlign: "center",
-  },
-  legal: {
-    marginTop: 24,
-    fontSize: 12,
-    color: "#999",
-    textAlign: "center",
   },
 });

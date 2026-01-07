@@ -1,11 +1,22 @@
+import { Persona } from "../types";
+import { PERSONAS } from "../constants/personas";
+
 interface TriggerCallParams {
   phone: string;
   customerId: string;
+  persona: Persona;
   isFirstCall: boolean;
+  context?: string;
 }
 
 export async function triggerDiplerCall(params: TriggerCallParams): Promise<void> {
-  const { phone, customerId, isFirstCall } = params;
+  const { phone, customerId, persona, isFirstCall, context } = params;
+
+  const agentId = process.env[PERSONAS[persona].diplerAgentEnvKey];
+
+  if (!agentId) {
+    throw new Error(`No Dipler agent configured for persona: ${persona}`);
+  }
 
   const response = await fetch("https://api.dipler.io/v1/calls", {
     method: "POST",
@@ -14,20 +25,14 @@ export async function triggerDiplerCall(params: TriggerCallParams): Promise<void
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      agent_id: process.env.DIPLER_AGENT_ID,
+      agent_id: agentId,
       phone_number: phone,
       webhook_url: `${process.env.API_BASE_URL}/api/webhook/dipler`,
       metadata: {
         customer_id: customerId,
         is_first_call: isFirstCall,
       },
-      // Instructions spéciales pour le premier appel
-      ...(isFirstCall && {
-        context: `C'est le premier appel avec cet utilisateur. 
-                  Présente-toi chaleureusement, explique le service, 
-                  et demande ses préférences d'horaire pour les prochains appels.
-                  Demande aussi son prénom.`,
-      }),
+      ...(context && { context }),
     }),
   });
 
