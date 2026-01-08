@@ -160,11 +160,15 @@ export async function POST(request: Request): Promise<Response> {
 
           // Send email with payment link (if email available)
           if (customer.email) {
-            await sendPaymentEmail({
-              email: customer.email,
-              customerId,
-              firstName: meta.first_name,
-            });
+            try {
+              await sendPaymentEmail({
+                email: customer.email,
+                customerId,
+                firstName: meta.first_name,
+              });
+            } catch (emailError) {
+              console.error("Failed to send payment email", emailError);
+            }
           }
 
           // Change status to awaiting_payment to block future calls

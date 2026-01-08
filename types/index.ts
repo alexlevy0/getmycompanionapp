@@ -3,6 +3,7 @@
 // ============================================
 
 export type UserStatus = "onboarding" | "trial" | "active" | "paused" | "churned" | "awaiting_payment";
+export type Persona = string;
 
 export interface UserMetadata {
   phone: string;

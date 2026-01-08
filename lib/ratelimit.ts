@@ -34,6 +34,19 @@ export const LIMITERS = {
         prefix: "@upstash/ratelimit/user-status",
       })
     : null,
+
+  /**
+   * Dipler Config: 10 requests per 1 minute
+   * Protects API token exposure
+   */
+  diplerConfig: redis
+    ? new Ratelimit({
+        redis,
+        limiter: Ratelimit.slidingWindow(10, "1 m"),
+        analytics: true,
+        prefix: "@upstash/ratelimit/dipler-config",
+      })
+    : null,
 };
 
 // ============================================

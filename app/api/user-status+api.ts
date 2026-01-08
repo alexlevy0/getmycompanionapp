@@ -1,9 +1,8 @@
-import { stripe } from "@/lib/stripe";
+import { extractBearerToken, getUserProfile } from "@/lib/auth";
 import { createScopedLogger } from "@/lib/logger";
 import { config } from "@/lib/config";
 import { ERROR_MESSAGES } from "@/constants/messages";
 import { checkRateLimit } from "@/lib/ratelimit";
-import { hashToken } from "@/lib/crypto";
 import type { Persona, UserStatus } from "@/types";
 
 const log = createScopedLogger("user-status");
@@ -30,35 +29,12 @@ interface UserStatusResponse {
 // Helpers
 // ============================================
 
-function extractBearerToken(request: Request): string | null {
-  const authHeader = request.headers.get("Authorization");
-  if (!authHeader) return null;
-  
-  const parts = authHeader.split(" ");
-  if (parts.length !== 2 || parts[0] !== "Bearer") return null;
-  
-  return parts[1];
-}
-
 function getClientIp(request: Request): string {
   const forwarded = request.headers.get("x-forwarded-for");
   const realIp = request.headers.get("x-real-ip");
   if (forwarded) return forwarded.split(",")[0].trim();
   if (realIp) return realIp.trim();
   return "127.0.0.1";
-}
-
-async function findCustomerByToken(token: string) {
-  try {
-    const tokenHash = hashToken(token);
-    const result = await stripe.customers.search({
-      query: `metadata['auth_token_hash']:'${tokenHash}'`,
-    });
-    return result.data[0] || null;
-  } catch (error) {
-    log.error("Failed to search customer by token", { error });
-    return null;
-  }
 }
 
 // ============================================
@@ -101,9 +77,9 @@ export async function GET(request: Request): Promise<Response> {
       );
     }
 
-    const customer = await findCustomerByToken(token);
+    const userProfile = await getUserProfile(token);
     
-    if (!customer) {
+    if (!userProfile) {
       log.warn("No customer found for token", { ip }); // Intentionally vague
       return Response.json(
         { error: ERROR_MESSAGES.unauthorized },
@@ -111,7 +87,7 @@ export async function GET(request: Request): Promise<Response> {
       );
     }
 
-    const meta = customer.metadata;
+    const meta = userProfile.metadata;
 
     // ========================================
     // 3. Status Response
@@ -123,8 +99,8 @@ export async function GET(request: Request): Promise<Response> {
       phone: meta.phone,
       
       nextCallScheduled: meta.next_call_scheduled || undefined,
-      totalCalls: parseInt(meta.total_calls || "0"),
-      trialCallsRemaining: parseInt(meta.trial_calls_remaining || "0"),
+      totalCalls: Number.parseInt(meta.total_calls || "0", 10),
+      trialCallsRemaining: Number.parseInt(meta.trial_calls_remaining || "0", 10),
       
       preferredTime: meta.preferred_time || config.defaults.preferredTime,
       preferredDays: meta.preferred_days || config.defaults.preferredDays,
@@ -134,7 +110,7 @@ export async function GET(request: Request): Promise<Response> {
     if (meta.status === "awaiting_payment") {
       const paymentLink = config.stripe.paymentLinkStandard();
       if (paymentLink) {
-        response.paymentLink = `${paymentLink}?client_reference_id=${customer.id}`;
+        response.paymentLink = `${paymentLink}?client_reference_id=${userProfile.id}`;
       }
     }
 

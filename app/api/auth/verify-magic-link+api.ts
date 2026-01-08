@@ -4,6 +4,7 @@ import { hashToken } from "@/lib/crypto";
 import { createScopedLogger } from "@/lib/logger";
 import { config } from "@/lib/config";
 import type { UserStatus } from "@/types";
+import { cacheUserProfile } from "@/lib/auth";
 
 const log = createScopedLogger("auth-verify-magic-link");
 
@@ -67,12 +68,15 @@ export async function GET(request: Request): Promise<Response> {
     const newTokenHash = hashToken(newAuthToken);
 
     // 6. Update Stripe with new token hash
-    await updateCustomerMetadata(customer.id, {
+    const updatedCustomer = await updateCustomerMetadata(customer.id, {
       ...customer.metadata,
       auth_token_hash: newTokenHash,
     });
 
-    // 7. Delete magic link token (one-time use)
+    // 7. Cache the profile for fast access
+    await cacheUserProfile(newAuthToken, updatedCustomer);
+
+    // 8. Delete magic link token (one-time use)
     await redis.del(`magic-link:${token}`);
 
     // 8. Build user data response
