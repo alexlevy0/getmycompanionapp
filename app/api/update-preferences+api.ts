@@ -3,10 +3,8 @@ import { cancelScheduledCall } from "@/lib/qstash";
 import { scheduleNextCallForUser } from "@/lib/handlers/call-completed";
 import { createScopedLogger } from "@/lib/logger";
 import { isValidTimeFormat } from "@/lib/utils";
-import { PERSONAS } from "@/constants/personas";
 import { ERROR_MESSAGES } from "@/constants/messages";
 import { hashToken } from "@/lib/crypto";
-import type { Persona } from "@/types";
 
 const log = createScopedLogger("update-preferences");
 
@@ -72,10 +70,6 @@ export async function POST(request: Request): Promise<Response> {
       return Response.json({ error: "Format d'heure invalide (HH:mm)" }, { status: 400 });
     }
 
-    if (persona && !PERSONAS[persona as Persona]) {
-      return Response.json({ error: "Persona invalide" }, { status: 400 });
-    }
-
     const updates: Record<string, string> = {};
     let shouldReschedule = false;
 
@@ -90,11 +84,6 @@ export async function POST(request: Request): Promise<Response> {
     if (preferredDays && preferredDays !== meta.preferred_days) {
       updates.preferred_days = preferredDays;
       shouldReschedule = true;
-    }
-
-    // Persona change? (No rescheduling needed, just update metadata)
-    if (persona && persona !== meta.persona) {
-      updates.persona = persona;
     }
 
     // 5. User Eligibility Check
@@ -133,7 +122,6 @@ export async function POST(request: Request): Promise<Response> {
       updated: {
         preferredTime: updates.preferred_time || meta.preferred_time,
         preferredDays: updates.preferred_days || meta.preferred_days,
-        persona: updates.persona || meta.persona,
         nextCallScheduled: updates.next_call_scheduled || meta.next_call_scheduled,
       }
     });
