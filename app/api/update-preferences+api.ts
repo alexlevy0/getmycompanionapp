@@ -1,6 +1,5 @@
 import { stripe, updateCustomerMetadata } from "@/lib/stripe";
-import { cancelScheduledCall } from "@/lib/qstash";
-import { scheduleNextCallForUser } from "@/lib/handlers/call-completed";
+import { callSchedulerService } from "@/lib/services/call-scheduler.service";
 import { createScopedLogger } from "@/lib/logger";
 import { isValidTimeFormat } from "@/lib/utils";
 import { ERROR_MESSAGES } from "@/constants/messages";
@@ -89,23 +88,22 @@ export async function POST(request: Request): Promise<Response> {
     // 5. User Eligibility Check
     const isEligibleForCalls =
       meta.status === "active" ||
-      (meta.status === "trial" && parseInt(meta.trial_calls_remaining || "0") > 0);
+      (meta.status === "trial" && Number.parseInt(meta.trial_calls_remaining || "0", 10) > 0);
 
     // 6. Dynamic Rescheduling Logic
     if (shouldReschedule && isEligibleForCalls && meta.qstash_message_id) {
       log.info("Rescheduling call due to preference change", { customerId: customer.id });
 
       // A. Cancel old job (swallows errors)
-      await cancelScheduledCall(meta.qstash_message_id);
+      await callSchedulerService.cancelScheduledCall(meta.qstash_message_id);
 
       // B. Schedule new job
       // Merge current meta with updates to calculate correct next time
-      const mergedMeta = { ...meta, ...updates };
+      const mergedMeta = { phone: meta.phone || "", ...meta, ...updates };
       
-      const scheduleResult = await scheduleNextCallForUser(
+      const scheduleResult = await callSchedulerService.scheduleNextCall(
         customer.id,
-        mergedMeta,
-        updates // Pass updates to accumulate changes (next_call_scheduled, message_id)
+        mergedMeta
       );
 
       // Merge schedule results into updates

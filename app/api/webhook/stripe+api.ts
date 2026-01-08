@@ -1,12 +1,21 @@
 import Stripe from "stripe";
-import { stripe, updateCustomerMetadata } from "@/lib/stripe";
-import { scheduleNextCall, cancelScheduledCall } from "@/lib/qstash";
-import { calculateNextCallTime } from "@/lib/utils";
+import { stripe } from "@/lib/stripe";
+import { billingService } from "@/lib/services/billing.service";
+import { apiSuccess, apiError, ApiErrors } from "@/lib/api-response";
+
+// ============================================
+// Stripe Webhook Handler
+// ============================================
 
 export async function POST(request: Request): Promise<Response> {
   try {
+    // 1. Verify signature
     const body = await request.text();
-    const signature = request.headers.get("stripe-signature")!;
+    const signature = request.headers.get("stripe-signature");
+
+    if (!signature) {
+      return apiError("Missing signature", 400);
+    }
 
     let event: Stripe.Event;
 
@@ -18,137 +27,82 @@ export async function POST(request: Request): Promise<Response> {
       );
     } catch (err) {
       console.error("Stripe webhook signature verification failed:", err);
-      return new Response("Invalid signature", { status: 400 });
+      return apiError("Invalid signature", 400);
     }
 
     console.log(`Stripe webhook received: ${event.type}`);
 
+    // 2. Route to appropriate handler
     switch (event.type) {
-      // ========================================
-      // CHECKOUT COMPLETED: Activate subscription
-      // ========================================
-      case "checkout.session.completed": {
-        const session = event.data.object as Stripe.Checkout.Session;
+      case "checkout.session.completed":
+        return handleCheckoutCompleted(event);
 
-        // Get customer ID from session or client_reference_id
-        // client_reference_id is set in the Payment Link URL
-        const customerId =
-          (session.customer as string) || session.client_reference_id;
+      case "customer.subscription.deleted":
+        return handleSubscriptionDeleted(event);
 
-        if (!customerId) {
-          console.error("Stripe webhook: No customer ID in checkout session");
-          return Response.json({ error: "No customer ID" }, { status: 400 });
-        }
+      case "invoice.payment_failed":
+        return handlePaymentFailed(event);
 
-        const customer = await stripe.customers.retrieve(customerId);
-        if (customer.deleted) {
-          console.error(`Stripe webhook: Customer ${customerId} was deleted`);
-          return new Response("Customer not found", { status: 404 });
-        }
-
-        const meta = customer.metadata;
-
-        console.log(`Payment received for ${meta.phone} (${customerId})`);
-
-        // Schedule first paid call based on preferences
-        const nextTime = calculateNextCallTime(
-          meta.preferred_time || "10:00",
-          meta.preferred_days || "daily",
-          meta.timezone || "Europe/Paris"
-        );
-
-        const messageId = await scheduleNextCall({
-          phone: meta.phone,
-          customerId,
-          scheduledFor: nextTime,
-        });
-
-        // Activate subscription
-        await updateCustomerMetadata(customerId, {
-          ...meta,
-          status: "active",
-          trial_calls_remaining: "0", // Clear trial count
-          next_call_scheduled: nextTime.toISOString(),
-          qstash_message_id: messageId,
-        });
-
-        console.log(
-          `Subscription activated for ${meta.phone}, next call: ${nextTime.toISOString()}`
-        );
-        break;
-      }
-
-      // ========================================
-      // SUBSCRIPTION DELETED: Stop calls
-      // ========================================
-      case "customer.subscription.deleted": {
-        const subscription = event.data.object as Stripe.Subscription;
-        const customerId = subscription.customer as string;
-
-        const customer = await stripe.customers.retrieve(customerId);
-        if (customer.deleted) {
-          return new Response("Customer not found", { status: 404 });
-        }
-
-        const meta = customer.metadata;
-
-        console.log(`Subscription cancelled for ${meta.phone}`);
-
-        // Cancel any scheduled call
-        if (meta.qstash_message_id) {
-          await cancelScheduledCall(meta.qstash_message_id);
-        }
-
-        // Mark as churned
-        await updateCustomerMetadata(customerId, {
-          ...meta,
-          status: "churned",
-          next_call_scheduled: "",
-          qstash_message_id: "",
-        });
-
-        break;
-      }
-
-      // ========================================
-      // PAYMENT FAILED: Pause subscription
-      // ========================================
-      case "invoice.payment_failed": {
-        const invoice = event.data.object as Stripe.Invoice;
-        const customerId = invoice.customer as string;
-
-        if (!customerId) break;
-
-        const customer = await stripe.customers.retrieve(customerId);
-        if (customer.deleted) break;
-
-        const meta = customer.metadata;
-
-        console.log(`Payment failed for ${meta.phone}`);
-
-        // Cancel scheduled call
-        if (meta.qstash_message_id) {
-          await cancelScheduledCall(meta.qstash_message_id);
-        }
-
-        // Pause until payment is resolved
-        await updateCustomerMetadata(customerId, {
-          ...meta,
-          status: "paused",
-          next_call_scheduled: "",
-          qstash_message_id: "",
-        });
-
-        break;
-      }
+      default:
+        return apiSuccess({ received: true });
     }
-
-    return Response.json({ received: true });
   } catch (error) {
     console.error("Stripe webhook error:", error);
-    return Response.json(
-      { error: "Webhook processing failed" },
-      { status: 500 }
-    );
+    return ApiErrors.internalError("Webhook processing failed");
   }
+}
+
+// ============================================
+// Event Handlers
+// ============================================
+
+async function handleCheckoutCompleted(event: Stripe.Event): Promise<Response> {
+  const session = event.data.object as Stripe.Checkout.Session;
+  const customerId = (session.customer as string) || session.client_reference_id;
+
+  if (!customerId) {
+    console.error("Stripe webhook: No customer ID in checkout session");
+    return apiError("No customer ID", 400);
+  }
+
+  const customer = await stripe.customers.retrieve(customerId);
+  if (customer.deleted) {
+    return ApiErrors.notFound("Customer");
+  }
+
+  await billingService.activateSubscription(customerId, customer.metadata);
+
+  return apiSuccess({ received: true, activated: true });
+}
+
+async function handleSubscriptionDeleted(event: Stripe.Event): Promise<Response> {
+  const subscription = event.data.object as Stripe.Subscription;
+  const customerId = subscription.customer as string;
+
+  const customer = await stripe.customers.retrieve(customerId);
+  if (customer.deleted) {
+    return ApiErrors.notFound("Customer");
+  }
+
+  await billingService.cancelSubscription(customerId, customer.metadata);
+
+  return apiSuccess({ received: true, cancelled: true });
+}
+
+async function handlePaymentFailed(event: Stripe.Event): Promise<Response> {
+  const invoice = event.data.object as Stripe.Invoice;
+  const customerId = invoice.customer as string;
+
+  if (!customerId) {
+    return apiSuccess({ received: true });
+  }
+
+  const customer = await stripe.customers.retrieve(customerId);
+  if (customer.deleted) {
+    return apiSuccess({ received: true });
+  }
+
+  await billingService.pauseSubscription(customerId, customer.metadata);
+
+  return apiSuccess({ received: true, paused: true });
 }

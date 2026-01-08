@@ -1,44 +1,28 @@
 // ============================================
-// User & Status Types
+// Re-export types from Zod schemas (Single Source of Truth)
 // ============================================
 
-export type UserStatus = "onboarding" | "trial" | "active" | "paused" | "churned" | "awaiting_payment";
+export type {
+  UserStatus,
+  UserMetadata,
+  DiplerWebhookPayload,
+} from "@/lib/schemas";
+
+// ============================================
+// Additional Types (not derived from schemas)
+// ============================================
+
 export type Persona = string;
 
-export interface UserMetadata {
-  phone: string;
-  first_name?: string;
-
-  preferred_time: string;
-  preferred_days: string;
-  timezone: string;
-
-  status: UserStatus;
-  trial_calls_remaining: string;
-
-  total_calls: string;
-  last_call_date?: string;
-  last_call_summary?: string;
-
-  // Preferences
-  goals?: string;
-  habits_streak?: string;
-  family_contact_phone?: string;
-  family_contact_name?: string;
-
-  // Scheduling
-  next_call_scheduled?: string;
-  qstash_message_id?: string;
-  consecutive_no_answer: string;
-}
+export type CallStatus = "completed" | "no_answer" | "failed";
 
 // ============================================
-// Dipler Webhook Payload (V1 Reference Structure)
+// Dipler Extraction Types
 // ============================================
 
 /**
  * Extraction data from Dipler's post-conversation analysis.
- * The Receptionist agent populates these fields during onboarding.
+ * Used for preference updates during onboarding and regular calls.
  */
 export interface DiplerExtraction {
   user_name?: string;
@@ -49,7 +33,6 @@ export interface DiplerExtraction {
 
 /**
  * Post-conversation analysis provided by Dipler after call completion.
- * May be missing if call failed or was too short.
  */
 export interface DiplerPostConversationAnalysis {
   summary?: string;
@@ -74,29 +57,14 @@ export interface DiplerConversation {
   postConversationAnalysis?: DiplerPostConversationAnalysis;
 }
 
-/**
- * Metadata passed to Dipler during triggerDiplerCall.
- * Returned in the webhook payload.
- */
-export interface DiplerWebhookMetadata {
-  customerId: string;
-  isFirstCall?: string; // "true" or "false" as string
-  [key: string]: string | undefined;
-}
-
-/**
- * Full Dipler webhook payload structure (V1 Reference).
- */
-export interface DiplerWebhookPayload {
-  conversation: DiplerConversation;
-  metadata: DiplerWebhookMetadata;
-}
-
 // ============================================
-// Call Status (derived from payload analysis)
+// Utility Functions
 // ============================================
 
-export type CallStatus = "completed" | "no_answer" | "failed";
+import { z } from "zod";
+import { DiplerWebhookSchema } from "@/lib/schemas";
+
+type DiplerPayload = z.infer<typeof DiplerWebhookSchema>;
 
 /**
  * Determines call status from Dipler payload.
@@ -104,7 +72,7 @@ export type CallStatus = "completed" | "no_answer" | "failed";
  * - failed: missing conversation data
  * - completed: everything else
  */
-export function determineCallStatus(payload: DiplerWebhookPayload): CallStatus {
+export function determineCallStatus(payload: DiplerPayload): CallStatus {
   if (!payload.conversation?.stats) {
     return "failed";
   }
