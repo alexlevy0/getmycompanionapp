@@ -14,6 +14,7 @@ import {
 } from "react-native";
 import { saveAuthToken, getAuthToken, clearAuthToken } from "@/lib/storage";
 import { SettingsModal } from "@/components/SettingsModal";
+import { CallModal } from "@/components/CallModal";
 import { StatusCard } from "@/components/dashboard/StatusCard";
 import { NextCallCard } from "@/components/dashboard/NextCallCard";
 import { StatsRow } from "@/components/dashboard/StatsRow";
@@ -64,16 +65,70 @@ export default function HomeScreen() {
   
   // Login / OTP State
   const [authMode, setAuthMode] = useState<"signup" | "signin">("signup");
+  const [email, setEmail] = useState("");
   const [otpCode, setOtpCode] = useState("");
   const [showOtpInput, setShowOtpInput] = useState(false);
+  const [magicLinkSent, setMagicLinkSent] = useState(false);
   
   // Settings Modal State
   const [isSettingsModalVisible, setIsSettingsModalVisible] = useState(false);
+  
+  // Call Modal State (for login page)
+  const [showCallModal, setShowCallModal] = useState(false);
+  const [diplerConfig, setDiplerConfig] = useState<{ apiToken: string; agentId: string } | null>(null);
 
-  // Check for existing token on mount
+  // Fetch Dipler config on mount
   useEffect(() => {
+    fetchDiplerConfig();
+  }, []);
+
+  const fetchDiplerConfig = async () => {
+    try {
+      const response = await fetch("/api/dipler-config");
+      if (response.ok) {
+        const config = await response.json();
+        setDiplerConfig(config);
+      }
+    } catch (err) {
+      console.error("Failed to fetch Dipler config:", err);
+    }
+  };
+
+  // Check for existing token or magic link on mount
+  useEffect(() => {
+    checkMagicLink();
     checkAuth();
   }, []);
+
+  const checkMagicLink = async () => {
+    if (typeof window === "undefined") return;
+    
+    const params = new URLSearchParams(window.location.search);
+    const magicToken = params.get("magic_token");
+    
+    if (magicToken) {
+      setAppState("loading");
+      try {
+        const response = await fetch(`/api/auth/verify-magic-link?token=${magicToken}`);
+        const data = await response.json();
+        
+        if (response.ok && data.token) {
+          await saveAuthToken(data.token);
+          setUserStatus(data.user);
+          setAppState("dashboard");
+          // Clean URL
+          window.history.replaceState({}, "", window.location.pathname);
+        } else {
+          setError(data.error || "Lien invalide ou expiré.");
+          setAppState("login");
+          window.history.replaceState({}, "", window.location.pathname);
+        }
+      } catch {
+        setError("Erreur de connexion.");
+        setAppState("login");
+      }
+    }
+  };
 
   const checkAuth = async () => {
     try {
@@ -180,6 +235,31 @@ export default function HomeScreen() {
     }
   };
 
+  const handleRequestMagicLink = async () => {
+    setError("");
+    setLoading(true);
+
+    try {
+      const response = await fetch("/api/auth/request-magic-link", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Erreur d'envoi");
+      }
+
+      setMagicLinkSent(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Une erreur est survenue");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleVerifyOtp = async () => {
     setError("");
     setLoading(true);
@@ -275,12 +355,35 @@ export default function HomeScreen() {
   // ========================================
   // Login State
   // ========================================
-  // ========================================
-  // Login State
-  // ========================================
   if (appState === "login") {
-    const isValidPhone = phone.replace(/\s/g, "").length >= 10;
-    const isValidOtp = otpCode.length === 6;
+    const isValidEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+
+    // Magic link sent confirmation
+    if (magicLinkSent) {
+      return (
+        <KeyboardAvoidingView
+          style={styles.container}
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+        >
+          <Text style={styles.emoji}>✉️</Text>
+          <Text style={styles.title}>Email envoyé !</Text>
+          <Text style={styles.subtitle}>
+            {"Vérifiez votre boîte mail.\nCliquez sur le lien pour vous connecter."}
+          </Text>
+          <Text style={styles.emailSentHint}>{email}</Text>
+          
+          <Pressable
+            style={styles.switchModeButton}
+            onPress={() => {
+              setMagicLinkSent(false);
+              setEmail("");
+            }}
+          >
+            <Text style={styles.switchModeText}>Utiliser une autre adresse</Text>
+          </Pressable>
+        </KeyboardAvoidingView>
+      );
+    }
 
     return (
       <KeyboardAvoidingView
@@ -290,92 +393,58 @@ export default function HomeScreen() {
         <Text style={styles.emoji}>📞</Text>
         <Text style={styles.title}>MyCompanion</Text>
         <Text style={styles.subtitle}>
-          {authMode === "signup" 
-            ? "L'IA qui t'appelle.\nChaque jour, à l'heure qui te convient."
-            : "Bon retour !\nConnectez-vous pour retrouver votre compte."}
+          {"L'IA qui t'appelle.\nChaque jour, à l'heure qui te convient."}
         </Text>
 
-        {!showOtpInput ? (
-          <>
-            <TextInput
-              style={styles.input}
-              placeholder="Ton numéro de téléphone"
-              placeholderTextColor="#999"
-              keyboardType="phone-pad"
-              value={phone}
-              onChangeText={setPhone}
-              autoFocus
-            />
+        {/* Email input - works for both signup and login */}
+        <TextInput
+          style={styles.input}
+          placeholder="Votre adresse email"
+          placeholderTextColor="#999"
+          keyboardType="email-address"
+          autoCapitalize="none"
+          value={email}
+          onChangeText={setEmail}
+          autoFocus
+        />
 
-            <Pressable
-              style={[styles.button, (!isValidPhone || loading) && styles.buttonDisabled]}
-              onPress={authMode === "signup" ? handleStartTrial : handleRequestOtp}
-              disabled={!isValidPhone || loading}
-            >
-              {loading ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <Text style={styles.buttonText}>
-                  {authMode === "signup" ? "M'appeler" : "Recevoir mon code"}
-                </Text>
-              )}
-            </Pressable>
+        <Pressable
+          style={[styles.button, (!isValidEmail || loading) && styles.buttonDisabled]}
+          onPress={handleRequestMagicLink}
+          disabled={!isValidEmail || loading}
+        >
+          {loading ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={styles.buttonText}>Commencer</Text>
+          )}
+        </Pressable>
 
-            <Pressable 
-              style={styles.switchModeButton}
-              onPress={() => {
-                 setAuthMode(authMode === "signup" ? "signin" : "signup");
-                 setError("");
-              }}
-            >
-              <Text style={styles.switchModeText}>
-                {authMode === "signup" 
-                  ? "Déjà un compte ? Se connecter" 
-                  : "Nouveau ? S'inscrire"}
-              </Text>
-            </Pressable>
-          </>
-        ) : (
-          <>
-            <TextInput
-              style={styles.input}
-              placeholder="Code reçu par SMS (6 chiffres)"
-              placeholderTextColor="#999"
-              keyboardType="number-pad"
-              value={otpCode}
-              onChangeText={setOtpCode}
-              maxLength={6}
-              autoFocus
-            />
-
-            <Pressable
-              style={[styles.button, (!isValidOtp || loading) && styles.buttonDisabled]}
-              onPress={handleVerifyOtp}
-              disabled={!isValidOtp || loading}
-            >
-              {loading ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <Text style={styles.buttonText}>Valider le code</Text>
-              )}
-            </Pressable>
-            
-            <Pressable 
-              style={styles.switchModeButton}
-              onPress={() => setShowOtpInput(false)}
-            >
-              <Text style={styles.switchModeText}>Modifier mon numéro</Text>
-            </Pressable>
-          </>
+        {/* Direct Call Button */}
+        {diplerConfig && (
+          <Pressable
+            style={styles.callNowButton}
+            onPress={() => setShowCallModal(true)}
+          >
+            <Text style={styles.callNowButtonText}>📞 Me faire appeler maintenant</Text>
+          </Pressable>
         )}
 
         {error ? <Text style={styles.error}>{error}</Text> : null}
 
         <Text style={styles.legal}>
-          {authMode === "signup" 
-            ? "3 appels gratuits, sans engagement.\nEn continuant, vous acceptez nos CGU."
-            : "Nous vous enverrons un code temporaire par SMS."}
+          {"3 appels gratuits, sans engagement.\nEn continuant, vous acceptez nos CGU."}
         </Text>
+
+        {/* Call Modal */}
+        {diplerConfig && (
+          <CallModal
+            visible={showCallModal}
+            onClose={() => setShowCallModal(false)}
+            apiToken={diplerConfig.apiToken}
+            agentId={diplerConfig.agentId}
+          />
+        )}
       </KeyboardAvoidingView>
     );
   }
@@ -432,8 +501,6 @@ export default function HomeScreen() {
           preferredTime={userStatus.preferredTime} 
         />
 
-
-
       </ScrollView>
 
       {/* Settings Modal */}
@@ -448,9 +515,6 @@ export default function HomeScreen() {
     </View>
   );
 }
-
-// ============================================
-// Styles
 // ============================================
 
 const styles = StyleSheet.create({
@@ -531,6 +595,12 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "600",
   },
+  emailSentHint: {
+    fontSize: 16,
+    color: "#6b7280",
+    marginTop: 16,
+    fontWeight: "500",
+  },
 
   // Dashboard styles
   dashboardContainer: {
@@ -573,5 +643,20 @@ const styles = StyleSheet.create({
   logoutText: {
     color: "#6b7280",
     fontSize: 14,
+  },
+  callNowButton: {
+    marginTop: 24,
+    paddingVertical: 16,
+    paddingHorizontal: 24,
+    backgroundColor: "#22c55e",
+    borderRadius: 12,
+    width: "100%",
+    maxWidth: 320,
+    alignItems: "center",
+  },
+  callNowButtonText: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "700",
   },
 });
