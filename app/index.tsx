@@ -7,13 +7,17 @@ import { LoadingScreen } from "@/components/screens/LoadingScreen";
 import { LoginScreen } from "@/components/screens/LoginScreen";
 import { DashboardScreen } from "@/components/screens/DashboardScreen";
 
+import { useDipler } from "@/hooks/useDipler";
+
 export default function HomeScreen() {
   const { user, isLoading, login, logout, refreshUser, token } = useAuth();
+  const { diplerConfig } = useDipler();
   
   // Handle Magic Link in URL
   useEffect(() => {
+    // ... existing magic link logic ...
     const handleMagicLink = async () => {
-      if (typeof globalThis.window === "undefined") return;
+      if (globalThis.window === undefined) return;
 
       const params = new URLSearchParams(globalThis.window.location.search);
       const magicToken = params.get("magic_token");
@@ -70,6 +74,7 @@ export default function HomeScreen() {
   return (
     <DashboardScreen 
       userStatus={user}
+      diplerConfig={diplerConfig}
       onLogout={logout}
       onRefresh={refreshUser}
       onUpdatePreferences={handleUpdatePreferences}

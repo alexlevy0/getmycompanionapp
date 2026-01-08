@@ -29,8 +29,17 @@ interface UserData {
   paymentLink?: string;
 }
 
+import { CallModal } from "@/components/CallModal";
+
+interface DiplerConfig {
+  apiToken: string;
+  agentId: string;
+  userIdForMemory?: string;
+}
+
 interface DashboardScreenProps {
   userStatus: UserData;
+  diplerConfig: DiplerConfig | null;
   onLogout: () => void;
   onRefresh: () => Promise<void>;
   onUpdatePreferences: (updates: { preferredTime: string }) => Promise<void>;
@@ -38,12 +47,14 @@ interface DashboardScreenProps {
 
 export const DashboardScreen = ({
   userStatus,
+  diplerConfig,
   onLogout,
   onRefresh,
   onUpdatePreferences,
 }: DashboardScreenProps) => {
   const [refreshing, setRefreshing] = useState(false);
   const [isSettingsModalVisible, setIsSettingsModalVisible] = useState(false);
+  const [isCallModalVisible, setIsCallModalVisible] = useState(false);
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -55,12 +66,10 @@ export const DashboardScreen = ({
     const supported = await Linking.canOpenURL(url);
     if (supported) {
       await Linking.openURL(url);
+    } else if (globalThis.window !== undefined) {
+      globalThis.window.open(url, "_blank");
     } else {
-      if (typeof globalThis.window !== "undefined") {
-        globalThis.window.open(url, "_blank");
-      } else {
-        Alert.alert("Erreur", "Impossible d'ouvrir le lien : " + url);
-      }
+      Alert.alert("Erreur", "Impossible d'ouvrir le lien : " + url);
     }
   };
 
@@ -103,6 +112,17 @@ export const DashboardScreen = ({
           onOpenPaymentLink={handleOpenLink}
         />
 
+        {/* Call Action */}
+        <View style={styles.callSection}>
+           <Button
+            label="📞 Appeler Dipler"
+            variant="primary"
+            size="lg"
+            onPress={() => setIsCallModalVisible(true)}
+            disabled={!diplerConfig}
+          />
+        </View>
+
         {/* Next Call Card */}
         <NextCallCard scheduledDate={userStatus.nextCallScheduled || ""} />
 
@@ -123,6 +143,17 @@ export const DashboardScreen = ({
         }}
         onUpdate={onUpdatePreferences}
       />
+
+       {/* Call Modal */}
+      {diplerConfig && (
+        <CallModal
+          visible={isCallModalVisible}
+          onClose={() => setIsCallModalVisible(false)}
+          apiToken={diplerConfig.apiToken}
+          agentId={diplerConfig.agentId}
+          userIdForMemory={diplerConfig.userIdForMemory}
+        />
+      )}
     </View>
   );
 };
@@ -149,5 +180,8 @@ const styles = StyleSheet.create({
   },
   actionButton: {
     marginRight: SPACING.sm,
+  },
+  callSection: {
+    marginVertical: SPACING.lg,
   },
 });
