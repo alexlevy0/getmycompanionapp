@@ -1,6 +1,6 @@
 import { updateCustomerMetadata } from "@/lib/stripe";
 import { scheduleNextCall } from "@/lib/qstash";
-import { sendPaymentSMS } from "@/lib/twilio";
+import { sendPaymentEmail } from "@/lib/resend";
 import { calculateNextCallTime } from "@/lib/utils";
 import { createScopedLogger } from "@/lib/logger";
 import { config } from "@/lib/config";
@@ -117,18 +117,18 @@ export async function scheduleNextCallForUser(
 }
 
 /**
- * Handles trial end: sends payment SMS.
+ * Handles trial end: sends payment email.
  */
 export async function handleTrialEnd(
   customerId: string,
-  phone: string,
+  email: string,
   firstName?: string
 ): Promise<void> {
-  await sendPaymentSMS({
-    phone,
+  await sendPaymentEmail({
+    email,
     customerId,
     firstName,
   });
 
-  log.info("Payment SMS sent", { customerId, phone });
+  log.info("Payment email sent", { customerId, email });
 }

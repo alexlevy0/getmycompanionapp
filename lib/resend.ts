@@ -101,3 +101,149 @@ export async function sendMagicLinkEmail({
     };
   }
 }
+
+// ============================================
+// Send Payment Email (replaces SMS)
+// ============================================
+
+interface SendPaymentEmailParams {
+  email: string;
+  customerId: string;
+  firstName?: string;
+}
+
+export async function sendPaymentEmail({
+  email,
+  customerId,
+  firstName,
+}: SendPaymentEmailParams): Promise<{ success: boolean; error?: string }> {
+  if (!resend) {
+    log.error("Resend not configured");
+    return { success: false, error: "Email service not configured" };
+  }
+
+  const paymentLinkBase = process.env.STRIPE_PAYMENT_LINK_STANDARD;
+  if (!paymentLinkBase) {
+    log.error("STRIPE_PAYMENT_LINK_STANDARD not configured");
+    return { success: false, error: "Payment link not configured" };
+  }
+
+  const paymentLink = `${paymentLinkBase}?client_reference_id=${customerId}`;
+  const greeting = firstName ? `${firstName}, merci` : "Merci";
+
+  try {
+    const { error } = await resend.emails.send({
+      from: "MyCompanion <noreply@getmycompanion.com>",
+      to: email,
+      subject: "🎉 Vos 3 appels gratuits sont terminés",
+      html: `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f5f5f5; margin: 0; padding: 20px;">
+  <div style="max-width: 480px; margin: 0 auto; background: white; border-radius: 16px; padding: 32px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);">
+    <h1 style="text-align: center; font-size: 32px; margin-bottom: 8px;">🎉</h1>
+    <h2 style="text-align: center; color: #1a1a1a; margin-bottom: 24px;">Vos appels gratuits sont terminés</h2>
+    
+    <p style="color: #374151; font-size: 16px; line-height: 1.6;">
+      ${greeting} d'avoir essayé MyCompanion !
+    </p>
+    
+    <p style="color: #374151; font-size: 16px; line-height: 1.6;">
+      Vos 3 appels gratuits sont maintenant épuisés. Pour continuer à recevoir votre appel quotidien, abonnez-vous ci-dessous :
+    </p>
+    
+    <div style="text-align: center; margin: 32px 0;">
+      <a href="${paymentLink}" style="display: inline-block; background-color: #22c55e; color: white; text-decoration: none; padding: 16px 32px; border-radius: 12px; font-weight: 600; font-size: 16px;">
+        Continuer avec MyCompanion
+      </a>
+    </div>
+    
+    <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 24px 0;">
+    
+    <p style="color: #9ca3af; font-size: 12px; text-align: center;">
+      MyCompanion - L'IA qui t'appelle
+    </p>
+  </div>
+</body>
+</html>
+      `,
+    });
+
+    if (error) {
+      log.error("Failed to send payment email", { error });
+      return { success: false, error: error.message };
+    }
+
+    log.info(`Payment email sent to ${email}`);
+    return { success: true };
+  } catch (error) {
+    log.error("Error sending payment email", { error });
+    return { 
+      success: false, 
+      error: error instanceof Error ? error.message : "Unknown error" 
+    };
+  }
+}
+
+// ============================================
+// Send Notification Email (replaces SMS)
+// ============================================
+
+interface SendNotificationEmailParams {
+  email: string;
+  subject: string;
+  message: string;
+}
+
+export async function sendNotificationEmail({
+  email,
+  subject,
+  message,
+}: SendNotificationEmailParams): Promise<{ success: boolean; error?: string }> {
+  if (!resend) {
+    log.error("Resend not configured");
+    return { success: false, error: "Email service not configured" };
+  }
+
+  try {
+    const { error } = await resend.emails.send({
+      from: "MyCompanion <noreply@getmycompanion.com>",
+      to: email,
+      subject,
+      html: `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f5f5f5; margin: 0; padding: 20px;">
+  <div style="max-width: 480px; margin: 0 auto; background: white; border-radius: 16px; padding: 32px;">
+    <h2 style="text-align: center; color: #1a1a1a;">📞 MyCompanion</h2>
+    <p style="color: #374151; font-size: 16px; line-height: 1.6;">${message}</p>
+    <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 24px 0;">
+    <p style="color: #9ca3af; font-size: 12px; text-align: center;">MyCompanion</p>
+  </div>
+</body>
+</html>
+      `,
+    });
+
+    if (error) {
+      log.error("Failed to send notification email", { error });
+      return { success: false, error: error.message };
+    }
+
+    log.info(`Notification email sent to ${email}`);
+    return { success: true };
+  } catch (error) {
+    log.error("Error sending notification email", { error });
+    return { 
+      success: false, 
+      error: error instanceof Error ? error.message : "Unknown error" 
+    };
+  }
+}

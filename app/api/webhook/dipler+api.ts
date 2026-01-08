@@ -1,9 +1,8 @@
 import { stripe, updateCustomerMetadata } from "@/lib/stripe";
 import { scheduleNextCall } from "@/lib/qstash";
-import { sendPaymentSMS, sendNotificationSMS } from "@/lib/twilio";
+import { sendPaymentEmail, sendNotificationEmail } from "@/lib/resend";
 import { calculateNextCallTime, calculateRetryTime } from "@/lib/utils";
 import { DiplerWebhookPayload, determineCallStatus } from "@/types";
-import { SMS_TEMPLATES } from "@/constants/messages";
 
 // ============================================
 // Constants
@@ -81,19 +80,19 @@ export async function POST(request: Request): Promise<Response> {
       } else {
         // Alerting & Pausing
         updates.status = "paused";
-        console.log(`Max retries reached for ${meta.phone}, pausing and sending alert`);
+        console.log(`Max retries reached for customer ${customerId}, pausing and sending alert`);
 
-        // Send alert SMS
-        try {
-          await sendNotificationSMS({
-            phone: meta.phone,
-            message: SMS_TEMPLATES.missedCallsReminder({
-              firstName: meta.first_name,
-              missedCount: noAnswerCount,
-            }),
-          });
-        } catch (smsError) {
-          console.error("Failed to send missed calls alert SMS", smsError);
+        // Send alert email (if email available)
+        if (customer.email) {
+          try {
+            await sendNotificationEmail({
+              email: customer.email,
+              subject: "📞 Nous n'avons pas pu vous joindre",
+              message: `Bonjour${meta.first_name ? ` ${meta.first_name}` : ""},\n\nNous avons essayé de vous appeler ${noAnswerCount} fois sans succès. Vos appels sont maintenant en pause.\n\nConnectez-vous à MyCompanion pour reprendre vos appels.`,
+            });
+          } catch (emailError) {
+            console.error("Failed to send missed calls alert email", emailError);
+          }
         }
       }
 
@@ -156,15 +155,17 @@ export async function POST(request: Request): Promise<Response> {
         updates.trial_calls_remaining = Math.max(0, remaining).toString();
 
         if (remaining <= 0) {
-          // Trial is over - send payment SMS and block future calls
-          console.log(`Trial ended for ${meta.phone}, sending payment link...`);
+          // Trial is over - send payment email and block future calls
+          console.log(`Trial ended for customer ${customerId}, sending payment link...`);
 
-          // Send SMS with payment link
-          await sendPaymentSMS({
-            phone: meta.phone,
-            customerId,
-            firstName: meta.first_name,
-          });
+          // Send email with payment link (if email available)
+          if (customer.email) {
+            await sendPaymentEmail({
+              email: customer.email,
+              customerId,
+              firstName: meta.first_name,
+            });
+          }
 
           // Change status to awaiting_payment to block future calls
           updates.status = "awaiting_payment";
