@@ -57,17 +57,13 @@ const STATUS_CONFIG: Record<string, { emoji: string; label: string; color: strin
 
 export default function HomeScreen() {
   const [appState, setAppState] = useState<AppState>("loading");
-  const [phone, setPhone] = useState("");
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [userStatus, setUserStatus] = useState<UserData | null>(null);
   
-  // Login / OTP State
-  const [authMode, setAuthMode] = useState<"signup" | "signin">("signup");
+  // Login State
   const [email, setEmail] = useState("");
-  const [otpCode, setOtpCode] = useState("");
-  const [showOtpInput, setShowOtpInput] = useState(false);
   const [magicLinkSent, setMagicLinkSent] = useState(false);
   
   // Settings Modal State
@@ -172,69 +168,6 @@ export default function HomeScreen() {
     }
   };
 
-  const handleStartTrial = async () => {
-    setError("");
-    setLoading(true);
-
-    try {
-      const response = await fetch("/api/start-trial", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone }),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || "Une erreur est survenue");
-      }
-
-      // Save the auth token
-      if (data.token) {
-        await saveAuthToken(data.token);
-        
-        // Anti-Race Condition:
-        // Use user data returned directly by verify-code if available.
-        // Falls back to fetchUserStatus if not (backward compatibility)
-        if (data.user) {
-          setUserStatus(data.user);
-          setAppState("dashboard");
-        } else {
-           await fetchUserStatus(data.token);
-        }
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Une erreur est survenue");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleRequestOtp = async () => {
-    setError("");
-    setLoading(true);
-
-    try {
-      const response = await fetch("/api/auth/request-code", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone }),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || "Erreur de connexion");
-      }
-
-      setShowOtpInput(true);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Une erreur est survenue");
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const handleRequestMagicLink = async () => {
     setError("");
     setLoading(true);
@@ -260,49 +193,12 @@ export default function HomeScreen() {
     }
   };
 
-  const handleVerifyOtp = async () => {
-    setError("");
-    setLoading(true);
-
-    try {
-      const response = await fetch("/api/auth/verify-code", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone, code: otpCode }),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || "Code invalide");
-      }
-
-      if (data.token) {
-        await saveAuthToken(data.token);
-        
-        // Anti-Race Condition:
-        if (data.user) {
-          setUserStatus(data.user);
-          setAppState("dashboard");
-        } else {
-          await fetchUserStatus(data.token);
-        }
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Une erreur est survenue");
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const handleLogout = async () => {
     await clearAuthToken();
     setUserStatus(null);
     setAppState("login");
-    setAuthMode("signup");
-    setShowOtpInput(false);
-    setPhone("");
-    setOtpCode("");
+    setEmail("");
+    setMagicLinkSent(false);
   };
 
   const handleRefresh = useCallback(async () => {
