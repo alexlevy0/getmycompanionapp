@@ -7,6 +7,7 @@ import {
   Pressable,
   ActivityIndicator,
   Platform,
+  ScrollView,
 } from "react-native";
 
 // ============================================
@@ -15,11 +16,19 @@ import {
 
 type CallState = "idle" | "connecting" | "active" | "ending";
 
+interface Message {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  timestamp: Date;
+}
+
 interface CallModalProps {
   readonly visible: boolean;
   readonly onClose: () => void;
   readonly apiToken: string;
   readonly agentId: string;
+  readonly userIdForMemory?: string;
 }
 
 // ============================================
@@ -92,15 +101,18 @@ export function CallModal({
   onClose,
   apiToken,
   agentId,
+  userIdForMemory,
 }: CallModalProps) {
   const [callState, setCallState] = useState<CallState>("idle");
   const [error, setError] = useState<string | null>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
 
   const socketRef = useRef<WebSocket | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const workletNodeRef = useRef<AudioWorkletNode | null>(null);
   const audioPlayerRef = useRef<AudioPlayer | null>(null);
+  const scrollViewRef = useRef<ScrollView | null>(null);
 
   // Cleanup on unmount or close
   useEffect(() => {
@@ -220,19 +232,22 @@ export function CallModal({
         // JSON messages
         try {
           const data = JSON.parse(event.data);
-          console.log("[DIPLER] Event:", data.type);
+          console.log("[DIPLER] Event:", data);
 
           switch (data.type) {
             case "ready":
-              // Send start message
+              // Send start message with userIdForMemory for memory persistence
               socket.send(JSON.stringify({
                 type: "start",
                 agentId,
+                ...(userIdForMemory && { config: { userIdForMemory } }),
               }));
               break;
 
             case "sessionStarted":
+              console.log("🎙️ Session démarrée");
               setCallState("active");
+              setMessages([]); // Clear messages on new call
               // Start sending microphone audio
               workletNode.port.onmessage = (e) => {
                 if (socket.readyState === WebSocket.OPEN) {
@@ -241,14 +256,133 @@ export function CallModal({
               };
               break;
 
+            case "userSpeechStart":
+              console.log("👤 Utilisateur parle");
+              break;
+
+            case "sttTranscription":
+              console.log("📝 Transcription:", data.conversation);
+              
+              if (Array.isArray(data.conversation)) {
+                const history = data.conversation.map((msg: any, index: number) => ({
+                  id: `${msg.role}-${index}-${msg.timestamp || Date.now()}`,
+                  role: msg.role === "model" ? "assistant" : "user",
+                  content: msg.text,
+                  timestamp: new Date(msg.timestamp || Date.now()),
+                }));
+                
+                // Filter out empty messages from history
+                const cleanHistory = history.filter((m: Message) => m.content);
+
+                setMessages(prev => {
+                  const lastLocal = prev[prev.length - 1];
+                  const lastServer = cleanHistory[cleanHistory.length - 1];
+
+                  // Should we preserve the local streaming assistant message?
+                  // Yes, if:
+                  // 1. We have a local assistant message
+                  // 2. The server history ends with a USER message (meaning server hasn't finalized the AI response yet)
+                  // OR server history is empty but we have local response
+                  const shouldPreserveLocal = 
+                    lastLocal?.role === "assistant" && 
+                    (!lastServer || lastServer.role === "user");
+
+                  if (shouldPreserveLocal) {
+                    return [...cleanHistory, lastLocal];
+                  }
+
+                  return cleanHistory;
+                });
+              } else if (typeof data.conversation === 'string') {
+                // Fallback for string
+                setMessages(prev => [...prev, {
+                  id: `user-${Date.now()}`,
+                  role: "user",
+                  content: data.conversation,
+                  timestamp: new Date(),
+                }]);
+              }
+              break;
+
+            case "modelSpeechStart":
+              console.log("🔊 IA parle");
+              // Initialize a new assistant message bubble for streaming
+              setMessages(prev => [...prev, {
+                id: `assistant-${Date.now()}`,
+                role: "assistant",
+                content: "", // Start empty, fill with chunks
+                timestamp: new Date(),
+              }]);
+              break;
+
+            case "llmChunk": {
+              const chunkContent = data.text || data.content || data.delta || data.chunk;
+              console.log("🤖 Réponse chunk:", chunkContent);
+              
+              if (chunkContent) {
+                setMessages(prev => {
+                  const lastMsg = prev[prev.length - 1];
+                  // If last message is assistant, append to it
+                  if (lastMsg && lastMsg.role === "assistant") {
+                    return [
+                      ...prev.slice(0, -1),
+                      { ...lastMsg, content: lastMsg.content + chunkContent }
+                    ];
+                  }
+                  // Should have been initialized by modelSpeechStart, but fallback:
+                  return [...prev, {
+                    id: `assistant-${Date.now()}`,
+                    role: "assistant",
+                    content: chunkContent,
+                    timestamp: new Date(),
+                  }];
+                });
+              }
+              break;
+            }
+
+            case "llmComplete":
+              console.log("✅ Réponse complète:", data.text);
+              if (data.text) {
+                setMessages(prev => {
+                  const lastMsg = prev[prev.length - 1];
+                  // Update last assistant message or create new one with full text
+                  if (lastMsg && lastMsg.role === "assistant") {
+                    return [...prev.slice(0, -1), { ...lastMsg, content: data.text }];
+                  }
+                  return [...prev, {
+                    id: `assistant-${Date.now()}`,
+                    role: "assistant", 
+                    content: data.text,
+                    timestamp: new Date()
+                  }];
+                });
+               }
+               break;
+
+            case "functionCalls":
+               console.log("🔧 Function calls:", data.functionCalls);
+               // Handle function calls if needed (e.g. hangup)
+               break;
+
+            case "stats":
+               console.log("📊 Stats:", data.stats);
+               cleanup(); // Stop microphone as per user request example using this.stopMicrophone() equivalent
+               onClose();
+               break;
+
             case "hungUp":
-              console.log("[DIPLER] Call ended");
-              cleanup();
-              onClose();
+              console.log("📞 Raccrochage en cours");
+              // stats usually follows, but we can cleanup here too if needed
+              // For now let's wait for stats or handle simple hangup
+              if (callState === 'active') { // Only if not already closing from stats
+                 // Optional: don't close yet if we expect stats? 
+                 // User example had simple log.
+              }
               break;
 
             case "error":
-              console.error("[DIPLER] Error:", data.error);
+              console.error("❌ Erreur:", data.error);
               setError(data.error);
               cleanup();
               break;
@@ -343,6 +477,38 @@ export function CallModal({
             )}
           </View>
 
+          {/* Messages Display */}
+          {callState === "active" && messages.length > 0 && (
+            <ScrollView 
+              ref={scrollViewRef}
+              style={styles.messagesContainer}
+              contentContainerStyle={styles.messagesContent}
+              onContentSizeChange={() => scrollViewRef.current?.scrollToEnd({ animated: true })}
+            >
+              {messages.map((msg) => (
+                <View 
+                  key={msg.id} 
+                  style={[
+                    styles.messageRow,
+                    msg.role === "user" ? styles.userMessageRow : styles.assistantMessageRow
+                  ]}
+                >
+                  <View style={[
+                    styles.messageBubble,
+                    msg.role === "user" ? styles.userBubble : styles.assistantBubble
+                  ]}>
+                    <Text style={[
+                      styles.messageText,
+                      msg.role === "user" ? styles.userMessageText : styles.assistantMessageText
+                    ]}>
+                      {msg.content}
+                    </Text>
+                  </View>
+                </View>
+              ))}
+            </ScrollView>
+          )}
+
           {/* Hangup Button */}
           {(callState === "active" || callState === "connecting") && (
             <Pressable
@@ -436,5 +602,50 @@ const styles = StyleSheet.create({
   closeButtonText: {
     color: "#9ca3af",
     fontSize: 16,
+  },
+  // Message styles
+  messagesContainer: {
+    width: "100%",
+    maxHeight: 200,
+    marginBottom: 16,
+    borderRadius: 12,
+    backgroundColor: "#262626",
+  },
+  messagesContent: {
+    padding: 12,
+    gap: 8,
+  },
+  messageRow: {
+    width: "100%",
+  },
+  userMessageRow: {
+    alignItems: "flex-end",
+  },
+  assistantMessageRow: {
+    alignItems: "flex-start",
+  },
+  messageBubble: {
+    maxWidth: "85%",
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 16,
+  },
+  userBubble: {
+    backgroundColor: "#2563eb",
+    borderBottomRightRadius: 4,
+  },
+  assistantBubble: {
+    backgroundColor: "#404040",
+    borderBottomLeftRadius: 4,
+  },
+  messageText: {
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  userMessageText: {
+    color: "#fff",
+  },
+  assistantMessageText: {
+    color: "#e5e5e5",
   },
 });

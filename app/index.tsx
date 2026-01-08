@@ -71,16 +71,20 @@ export default function HomeScreen() {
   
   // Call Modal State (for login page)
   const [showCallModal, setShowCallModal] = useState(false);
-  const [diplerConfig, setDiplerConfig] = useState<{ apiToken: string; agentId: string } | null>(null);
+  const [diplerConfig, setDiplerConfig] = useState<{ apiToken: string; agentId: string; userIdForMemory?: string } | null>(null);
 
   // Fetch Dipler config on mount
   useEffect(() => {
     fetchDiplerConfig();
   }, []);
 
-  const fetchDiplerConfig = async () => {
+  const fetchDiplerConfig = async (authToken?: string) => {
     try {
-      const response = await fetch("/api/dipler-config");
+      const headers: Record<string, string> = {};
+      if (authToken) {
+        headers.Authorization = `Bearer ${authToken}`;
+      }
+      const response = await fetch("/api/dipler-config", { headers });
       if (response.ok) {
         const config = await response.json();
         setDiplerConfig(config);
@@ -339,6 +343,7 @@ export default function HomeScreen() {
             onClose={() => setShowCallModal(false)}
             apiToken={diplerConfig.apiToken}
             agentId={diplerConfig.agentId}
+            userIdForMemory={diplerConfig.userIdForMemory}
           />
         )}
       </KeyboardAvoidingView>

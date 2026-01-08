@@ -12,6 +12,7 @@ import {
 } from "react-native";
 import { useState, useEffect } from "react";
 import { CallModal } from "./CallModal";
+import { getAuthToken } from "@/lib/storage";
 
 interface SettingsModalProps {
   readonly visible: boolean;
@@ -31,19 +32,24 @@ export function SettingsModal({
   const [preferredTime, setPreferredTime] = useState(currentSettings.preferredTime);
   const [loading, setLoading] = useState(false);
   const [showCallModal, setShowCallModal] = useState(false);
-  const [diplerConfig, setDiplerConfig] = useState<{ apiToken: string; agentId: string } | null>(null);
+  const [diplerConfig, setDiplerConfig] = useState<{ apiToken: string; agentId: string; userIdForMemory?: string } | null>(null);
 
   useEffect(() => {
     if (visible) {
       setPreferredTime(currentSettings.preferredTime);
-      // Fetch Dipler config
+      // Fetch Dipler config with auth token
       fetchDiplerConfig();
     }
   }, [visible, currentSettings]);
 
   const fetchDiplerConfig = async () => {
     try {
-      const response = await fetch("/api/dipler-config");
+      const token = await getAuthToken();
+      const headers: Record<string, string> = {};
+      if (token) {
+        headers.Authorization = `Bearer ${token}`;
+      }
+      const response = await fetch("/api/dipler-config", { headers });
       if (response.ok) {
         const config = await response.json();
         setDiplerConfig(config);
@@ -151,6 +157,7 @@ export function SettingsModal({
           onClose={handleCallModalClose}
           apiToken={diplerConfig.apiToken}
           agentId={diplerConfig.agentId}
+          userIdForMemory={diplerConfig.userIdForMemory}
         />
       )}
     </>
