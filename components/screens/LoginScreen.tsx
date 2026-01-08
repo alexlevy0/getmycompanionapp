@@ -1,33 +1,39 @@
 import React, { useState } from "react";
-import {
-  View,
-  Text,
-  TextInput,
-  Pressable,
-  StyleSheet,
-  KeyboardAvoidingView,
-  Platform,
-  ActivityIndicator,
-} from "react-native";
+import { View, StyleSheet, Alert, Pressable, KeyboardAvoidingView, Platform } from "react-native";
 import { CallModal } from "@/components/CallModal";
 
+// Design System
+import { Text } from "@/components/ui/Text";
+import { Input } from "@/components/ui/Input";
+import { Button } from "@/components/ui/Button";
+import { Card } from "@/components/ui/Card";
+import { COLORS, SPACING } from "@/constants/theme";
+
 interface LoginScreenProps {
-  diplerConfig: {
-    apiToken: string;
-    agentId: string;
-    userIdForMemory?: string;
-  } | null;
+  diplerConfig: any; // We'll keep this as optional since it's null when unauth
 }
 
 export const LoginScreen = ({ diplerConfig }: LoginScreenProps) => {
   const [email, setEmail] = useState("");
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
   const [magicLinkSent, setMagicLinkSent] = useState(false);
-  const [showCallModal, setShowCallModal] = useState(false);
+  const [isCallModalVisible, setIsCallModalVisible] = useState(false);
+  const [emailError, setEmailError] = useState("");
 
   const handleRequestMagicLink = async () => {
-    setError("");
+    if (!email) {
+      setEmailError("Email requis");
+      return;
+    }
+    
+    // Basic email validation regex
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      setEmailError("Email invalide");
+      return;
+    }
+
+    setEmailError("");
     setLoading(true);
 
     try {
@@ -39,103 +45,100 @@ export const LoginScreen = ({ diplerConfig }: LoginScreenProps) => {
 
       const data = await response.json();
 
-      if (!response.ok) {
-        throw new Error(data.error || "Erreur d'envoi");
+      if (response.ok) {
+        setMagicLinkSent(true);
+        Alert.alert("Succès", data.message);
+      } else {
+        setEmailError(data.error || "Une erreur est survenue.");
       }
-
-      setMagicLinkSent(true);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Une erreur est survenue");
+    } catch (error) {
+      Alert.alert("Erreur", "Impossible de contacter le serveur.");
     } finally {
       setLoading(false);
     }
   };
 
-  const isValidEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-
-  // Magic link sent confirmation
-  if (magicLinkSent) {
-    return (
-      <KeyboardAvoidingView
-        style={styles.container}
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-      >
-        <Text style={styles.emoji}>✉️</Text>
-        <Text style={styles.title}>Email envoyé !</Text>
-        <Text style={styles.subtitle}>
-          {"Vérifiez votre boîte mail.\nCliquez sur le lien pour vous connecter."}
-        </Text>
-        <Text style={styles.emailSentHint}>{email}</Text>
-        
-        <Pressable
-          style={styles.switchModeButton}
-          onPress={() => {
-            setMagicLinkSent(false);
-            setEmail("");
-          }}
-        >
-          <Text style={styles.switchModeText}>Utiliser une autre adresse</Text>
-        </Pressable>
-      </KeyboardAvoidingView>
-    );
-  }
+  const handleStartDemo = () => {
+    if (!diplerConfig) {
+      Alert.alert("Connexion requise", "Veuillez vous connecter pour essayer la démo.");
+      return;
+    }
+    setIsCallModalVisible(true);
+  };
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
+    <KeyboardAvoidingView 
       behavior={Platform.OS === "ios" ? "padding" : "height"}
+      style={styles.container}
     >
-      <Text style={styles.emoji}>📞</Text>
-      <Text style={styles.title}>MyCompanion</Text>
-      <Text style={styles.subtitle}>
-        {"L'IA qui t'appelle.\nChaque jour, à l'heure qui te convient."}
-      </Text>
+      <View style={styles.content}>
+        <View style={styles.header}>
+          <Text variant="h1" align="center" style={styles.title}>
+            MyCompanion
+          </Text>
+          <Text variant="body" align="center" color={COLORS.text.secondary}>
+            Votre coach de vie personnel, accessible à tout moment par téléphone.
+          </Text>
+        </View>
 
-      {/* Email input */}
-      <TextInput
-        style={styles.input}
-        placeholder="Votre adresse email"
-        placeholderTextColor="#999"
-        keyboardType="email-address"
-        autoCapitalize="none"
-        value={email}
-        onChangeText={setEmail}
-        autoFocus
-      />
+        <Card variant="default" padding="xl" style={styles.authCard}>
+          {!magicLinkSent ? (
+            <>
+              <Text variant="h3" style={styles.cardTitle}>Connexion</Text>
+              
+              <Input
+                label="Email"
+                placeholder="votre@email.com"
+                value={email}
+                onChangeText={(text) => {
+                  setEmail(text);
+                  setEmailError("");
+                }}
+                autoCapitalize="none"
+                keyboardType="email-address"
+                error={emailError}
+              />
 
-      <Pressable
-        style={[styles.button, (!isValidEmail || loading) && styles.buttonDisabled]}
-        onPress={handleRequestMagicLink}
-        disabled={!isValidEmail || loading}
-      >
-        {loading ? (
-          <ActivityIndicator color="#fff" />
-        ) : (
-          <Text style={styles.buttonText}>Commencer</Text>
-        )}
-      </Pressable>
+              <Button
+                label="Recevoir mon lien de connexion"
+                onPress={handleRequestMagicLink}
+                loading={loading}
+              />
+            </>
+          ) : (
+            <View style={styles.sentContainer}>
+              <Text variant="h3" align="center">📩 Lien envoyé !</Text>
+              <Text align="center" style={styles.sentText}>
+                Vérifiez votre boîte mail ({email}) et cliquez sur le lien pour vous connecter.
+              </Text>
+              <Button
+                label="Renvoyer le lien"
+                variant="outline"
+                onPress={() => setMagicLinkSent(false)}
+                size="sm"
+              />
+            </View>
+          )}
+        </Card>
 
-      {/* Direct Call Button */}
-      {diplerConfig && (
-        <Pressable
-          style={styles.callNowButton}
-          onPress={() => setShowCallModal(true)}
-        >
-          <Text style={styles.callNowButtonText}>📞 Me faire appeler maintenant</Text>
-        </Pressable>
-      )}
-
-      {error ? <Text style={styles.error}>{error}</Text> : null}
-
-      <Text style={styles.legal}>
-        {"3 appels gratuits, sans engagement.\nEn continuant, vous acceptez nos CGU."}
-      </Text>
-
+        <View style={styles.demoSection}>
+          <Text variant="caption" align="center" style={styles.demoText}>
+            Déjà client ? Prenez un appel test.
+          </Text>
+          <Button
+            label="📞 Me faire appeler maintenant"
+            variant="secondary"
+            onPress={handleStartDemo}
+            disabled={!diplerConfig}
+            style={!diplerConfig ? { opacity: 0.5 } : undefined}
+          />
+        </View>
+      </View>
       {/* Call Modal */}
       {diplerConfig && (
         <CallModal
-          visible={showCallModal}
-          onClose={() => setShowCallModal(false)}
+          visible={isCallModalVisible}
+          onClose={() => setIsCallModalVisible(false)}
           apiToken={diplerConfig.apiToken}
           agentId={diplerConfig.agentId}
           userIdForMemory={diplerConfig.userIdForMemory}
@@ -148,95 +151,46 @@ export const LoginScreen = ({ diplerConfig }: LoginScreenProps) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: COLORS.background,
+  },
+  content: {
+    flex: 1,
     justifyContent: "center",
-    alignItems: "center",
-    padding: 24,
-    backgroundColor: "#fff",
-  },
-  emoji: {
-    fontSize: 64,
-    marginBottom: 16,
-  },
-  title: {
-    fontSize: 32,
-    fontWeight: "700",
-    marginBottom: 8,
-    color: "#1a1a1a",
-  },
-  subtitle: {
-    fontSize: 18,
-    color: "#666",
-    textAlign: "center",
-    marginBottom: 32,
-    lineHeight: 26,
-  },
-  input: {
+    padding: SPACING.xl,
+    maxWidth: 500,
     width: "100%",
-    maxWidth: 320,
-    height: 56,
-    borderWidth: 2,
-    borderColor: "#e0e0e0",
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    fontSize: 18,
-    marginBottom: 16,
+    alignSelf: "center",
   },
-  button: {
-    width: "100%",
-    maxWidth: 320,
-    height: 56,
-    backgroundColor: "#2563eb",
-    borderRadius: 12,
-    justifyContent: "center",
-    alignItems: "center",
+  header: {
+    marginBottom: SPACING.xxxl,
+    gap: SPACING.md,
   },
-  buttonDisabled: {
-    backgroundColor: "#93c5fd",
-  },
-  buttonText: {
-    color: "#fff",
-    fontSize: 18,
-    fontWeight: "600",
-  },
-  error: {
-    color: "#dc2626",
-    marginBottom: 16,
-    textAlign: "center",
-  },
-  legal: {
-    marginTop: 24,
-    fontSize: 12,
-    color: "#999",
-    textAlign: "center",
-  },
-  switchModeButton: {
-    marginTop: 16,
-    padding: 8,
-  },
-  switchModeText: {
-    color: "#2563eb",
-    fontSize: 14,
-    fontWeight: "600",
-  },
-  emailSentHint: {
-    fontSize: 16,
-    color: "#6b7280",
-    marginTop: 16,
-    fontWeight: "500",
-  },
-  callNowButton: {
-    marginTop: 24,
-    paddingVertical: 16,
-    paddingHorizontal: 24,
-    backgroundColor: "#22c55e",
-    borderRadius: 12,
-    width: "100%",
-    maxWidth: 320,
-    alignItems: "center",
-  },
+  title: {},
   callNowButtonText: {
     color: "#fff",
     fontSize: 16,
     fontWeight: "700",
+  },
+  authCard: {
+    marginBottom: SPACING.xxl,
+  },
+  cardTitle: {
+    marginBottom: SPACING.lg,
+    textAlign: 'center',
+  },
+  sentContainer: {
+    alignItems: "center",
+    gap: SPACING.md,
+  },
+  sentText: {
+    marginBottom: SPACING.md,
+    textAlign: "center",
+  },
+  demoSection: {
+    alignItems: "center",
+    gap: SPACING.sm,
+  },
+  demoText: {
+    marginBottom: SPACING.sm,
   },
 });

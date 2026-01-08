@@ -8,6 +8,12 @@ import { DiplerWebhookPayload, determineCallStatus } from "@/types";
 // Constants
 // ============================================
 
+import { DiplerWebhookSchema } from "@/lib/schemas";
+
+// ============================================
+// Constants
+// ============================================
+
 const DEFAULT_TIME = "10:00";
 const DEFAULT_DAYS = "daily";
 const MAX_SUMMARY_LENGTH = 500;
@@ -28,16 +34,23 @@ function truncate(str: string | undefined, maxLength: number = MAX_SUMMARY_LENGT
 
 export async function POST(request: Request): Promise<Response> {
   try {
-    const payload: DiplerWebhookPayload = await request.json();
+    const json = await request.json();
+    const result = DiplerWebhookSchema.safeParse(json);
+
+    if (!result.success) {
+      console.error("Dipler webhook validation failed", result.error);
+      return Response.json({ error: "Invalid payload" }, { status: 400 });
+    }
+
+    const payload = result.data;
 
     // ========================================
     // 1. Parse customerId from metadata
     // ========================================
-    const customerId = payload.metadata?.customerId;
-    if (!customerId) {
-      console.error("Dipler webhook: Missing customerId in metadata");
-      return Response.json({ error: "Missing customerId" }, { status: 400 });
-    }
+    const customerId = payload.metadata.customerId;
+    // (customerId is guaranteed to exist by Zod schema)
+    
+    // ... rest of logic uses typed payload ...
 
     // ========================================
     // 2. Retrieve Stripe Customer

@@ -4,6 +4,7 @@ import { stripe } from "@/lib/stripe";
 import { createScopedLogger } from "@/lib/logger";
 import { config } from "@/lib/config";
 import { hashToken } from "@/lib/crypto";
+import { LoginRequestSchema } from "@/lib/schemas";
 
 const log = createScopedLogger("auth-magic-link");
 
@@ -35,16 +36,18 @@ function isValidEmail(email: string): boolean {
 
 export async function POST(request: Request): Promise<Response> {
   try {
-    const { email } = await request.json();
-    const ip = getClientIp(request);
+    const json = await request.json();
+    const validation = LoginRequestSchema.safeParse(json);
 
-    // 1. Validate email
-    if (!email || !isValidEmail(email)) {
+    if (!validation.success) {
       return Response.json(
-        { error: "Adresse email invalide." },
+        { error: validation.error.errors[0].message },
         { status: 400 }
       );
     }
+
+    const { email } = validation.data;
+    const ip = getClientIp(request);
 
     const normalizedEmail = email.toLowerCase().trim();
 

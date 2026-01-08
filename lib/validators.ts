@@ -82,7 +82,7 @@ export function validatePayload<T>(
   }
   
   const errorMessage = result.error.errors
-    .map((e) => `${e.path.join(".")}: ${e.message}`)
+    .map((e: any) => `${e.path.join(".")}: ${e.message}`)
     .join(", ");
   
   return { success: false, error: errorMessage };

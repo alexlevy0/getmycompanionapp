@@ -1,26 +1,31 @@
 import React, { useState } from "react";
 import {
   View,
-  Text,
-  Pressable,
   StyleSheet,
   ScrollView,
   RefreshControl,
+  Linking,
+  Alert,
 } from "react-native";
 import { SettingsModal } from "@/components/SettingsModal";
 import { StatusCard } from "@/components/dashboard/StatusCard";
 import { NextCallCard } from "@/components/dashboard/NextCallCard";
 import { StatsRow } from "@/components/dashboard/StatsRow";
 
+// Design System
+import { Text } from "@/components/ui/Text";
+import { Button } from "@/components/ui/Button";
+import { COLORS, SPACING } from "@/constants/theme";
+
 interface UserData {
-  status: any; // Using any for now to avoid re-importing complex types or just use simple typing
+  status: string;
   firstName?: string;
   phone: string;
   nextCallScheduled?: string;
-  totalCalls: number;
-  trialCallsRemaining: number;
-  preferredTime: string;
-  preferredDays: string;
+  totalCalls?: string;
+  trialCallsRemaining?: string;
+  preferredTime?: string;
+  preferredDays?: string;
   paymentLink?: string;
 }
 
@@ -46,40 +51,56 @@ export const DashboardScreen = ({
     setRefreshing(false);
   };
 
+  const handleOpenLink = async (url: string) => {
+    const supported = await Linking.canOpenURL(url);
+    if (supported) {
+      await Linking.openURL(url);
+    } else {
+      if (typeof globalThis.window !== "undefined") {
+        globalThis.window.open(url, "_blank");
+      } else {
+        Alert.alert("Erreur", "Impossible d'ouvrir le lien : " + url);
+      }
+    }
+  };
+
   return (
-    <View style={{ flex: 1 }}>
+    <View style={styles.container}>
       <ScrollView
-        contentContainerStyle={styles.dashboardContainer}
+        contentContainerStyle={styles.scrollContent}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />
         }
       >
         {/* Header */}
         <View style={styles.header}>
-          <Text style={styles.greeting}>
+          <Text variant="h1">
             Bonjour{userStatus.firstName ? `, ${userStatus.firstName}` : ""} 👋
           </Text>
+          
           <View style={styles.headerActions}>
-            <Pressable 
-              onPress={() => setIsSettingsModalVisible(true)} 
-              style={styles.settingsButton}
-            >
-              <Text style={styles.settingsButtonText}>⚙️ Réglages</Text>
-            </Pressable>
-            <Pressable onPress={onLogout} style={styles.logoutButton}>
-              <Text style={styles.logoutText}>Déconnexion</Text>
-            </Pressable>
+            <Button 
+              label="⚙️ Réglages" 
+              variant="outline" 
+              size="sm" 
+              onPress={() => setIsSettingsModalVisible(true)}
+              style={styles.actionButton}
+            />
+            <Button 
+              label="Déconnexion" 
+              variant="secondary" 
+              size="sm" 
+              onPress={onLogout}
+            />
           </View>
         </View>
 
         {/* Status Card */}
         <StatusCard 
           status={userStatus.status} 
-          trialCallsRemaining={userStatus.trialCallsRemaining} 
+          trialCallsRemaining={Number.parseInt(userStatus.trialCallsRemaining || "0", 10)} 
           paymentLink={userStatus.paymentLink}
-          onOpenPaymentLink={(url) => {
-            if (typeof window !== "undefined") window.open(url, "_blank");
-          }}
+          onOpenPaymentLink={handleOpenLink}
         />
 
         {/* Next Call Card */}
@@ -87,8 +108,8 @@ export const DashboardScreen = ({
 
         {/* Stats */}
         <StatsRow 
-          totalCalls={userStatus.totalCalls} 
-          preferredTime={userStatus.preferredTime} 
+          totalCalls={Number.parseInt(userStatus.totalCalls || "0", 10)} 
+          preferredTime={userStatus.preferredTime || "10:00"} 
         />
 
       </ScrollView>
@@ -98,7 +119,7 @@ export const DashboardScreen = ({
         visible={isSettingsModalVisible}
         onClose={() => setIsSettingsModalVisible(false)}
         currentSettings={{
-          preferredTime: userStatus.preferredTime,
+          preferredTime: userStatus.preferredTime || "10:00",
         }}
         onUpdate={onUpdatePreferences}
       />
@@ -107,45 +128,26 @@ export const DashboardScreen = ({
 };
 
 const styles = StyleSheet.create({
-  dashboardContainer: {
+  container: {
+    flex: 1,
+    backgroundColor: COLORS.background,
+  },
+  scrollContent: {
     flexGrow: 1,
-    padding: 24,
+    padding: SPACING.xl,
     paddingTop: 60,
-    backgroundColor: "#f5f5f5",
   },
   header: {
-    marginBottom: 24,
+    marginBottom: SPACING.xl,
   },
   headerActions: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-    marginTop: 8,
+    justifyContent: "flex-start",
+    marginTop: SPACING.md,
+    gap: SPACING.sm, // Note: gap might not work in older RN versions, use margin if needed
   },
-  greeting: {
-    fontSize: 28,
-    fontWeight: "700",
-    color: "#1a1a1a",
-    marginBottom: 8,
-  },
-  settingsButton: {
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    backgroundColor: "#fff",
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-  },
-  settingsButtonText: {
-    color: "#374151",
-    fontWeight: "600",
-    fontSize: 14,
-  },
-  logoutButton: {
-    padding: 8,
-  },
-  logoutText: {
-    color: "#6b7280",
-    fontSize: 14,
+  actionButton: {
+    marginRight: SPACING.sm,
   },
 });

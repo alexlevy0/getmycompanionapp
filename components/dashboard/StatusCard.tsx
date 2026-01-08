@@ -1,8 +1,7 @@
 import { View, Text, Pressable, StyleSheet } from "react-native";
-import type { UserStatus } from "@/types";
 
 interface StatusCardProps {
-  status: UserStatus;
+  status: string;
   trialCallsRemaining: number;
   paymentLink?: string;
   onOpenPaymentLink: (url: string) => void;
