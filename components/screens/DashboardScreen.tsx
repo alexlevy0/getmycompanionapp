@@ -11,6 +11,8 @@ import { SettingsModal } from "@/components/SettingsModal";
 import { StatusCard } from "@/components/dashboard/StatusCard";
 import { NextCallCard } from "@/components/dashboard/NextCallCard";
 import { StatsRow } from "@/components/dashboard/StatsRow";
+import { IncomingCallModal } from "@/components/IncomingCallModal";
+import { usePendingCall } from "@/hooks/usePendingCall";
 
 // Design System
 import { Text } from "@/components/ui/Text";
@@ -56,6 +58,16 @@ export const DashboardScreen = ({
   const [isSettingsModalVisible, setIsSettingsModalVisible] = useState(false);
   const [isCallModalVisible, setIsCallModalVisible] = useState(false);
 
+  // Incoming call polling
+  const { pendingCall, isLoading: isPendingCallLoading, acceptCall, declineCall } = usePendingCall();
+
+  // Handle incoming call acceptance
+  const handleAcceptIncomingCall = async () => {
+    const success = await acceptCall();
+    if (success) {
+      setIsCallModalVisible(true);
+    }
+  };
   const handleRefresh = async () => {
     setRefreshing(true);
     await onRefresh();
@@ -154,6 +166,15 @@ export const DashboardScreen = ({
           userIdForMemory={diplerConfig.userIdForMemory}
         />
       )}
+
+      {/* Incoming Call Modal */}
+      <IncomingCallModal
+        visible={!!pendingCall && !isCallModalVisible}
+        callerName={pendingCall?.firstName || "MyCompanion"}
+        onAccept={handleAcceptIncomingCall}
+        onDecline={declineCall}
+        isLoading={isPendingCallLoading}
+      />
     </View>
   );
 };
